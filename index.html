@@ -836,6 +836,9 @@ function PauperTracker({ user, onSignOut }) {
 
         {!loading && screen === "formatos" && (
           <div>
+            <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 16 }}>
+              Aqui você adiciona os formatos que joga (ex: Pauper, Duel Commander). Vale pro time todo — quem cadastrar, todo mundo já vê.
+            </div>
             <Field label="Adicionar formato">
               <div style={{ display: "flex", gap: 8 }}>
                 <input value={newFormatoName} onChange={(e) => setNewFormatoName(e.target.value)}
