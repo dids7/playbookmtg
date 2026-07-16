@@ -407,12 +407,6 @@ function PauperTracker({ user, onSignOut }) {
     setNewFormatoName("");
     await persistCatalog(nextCatalog);
   }
-  async function handleRemoveFormato(name) {
-    const nextCatalog = { formatos: data.formatos.filter((f) => f !== name), decks: data.decks };
-    setData((prev) => ({ ...prev, formatos: nextCatalog.formatos }));
-    await persistCatalog(nextCatalog);
-  }
-
   async function handleAddDeck() {
     const name = newDeckName.trim();
     if (!name) { setDeckError("Digita um nome pro deck."); return; }
@@ -424,12 +418,6 @@ function PauperTracker({ user, onSignOut }) {
     setNewDeckName("");
     await persistCatalog(nextCatalog);
   }
-  async function handleRemoveDeck(name, formato) {
-    const nextCatalog = { formatos: data.formatos, decks: data.decks.filter((d) => !(d.name === name && d.formato === formato)) };
-    setData((prev) => ({ ...prev, decks: nextCatalog.decks }));
-    await persistCatalog(nextCatalog);
-  }
-
   function startEdit(match) {
     setForm({
       formato: match.formato || "", meuDeck: match.meuDeck, oponenteDeck: match.oponenteDeck,
@@ -838,7 +826,6 @@ function PauperTracker({ user, onSignOut }) {
                         <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{d.name}</span>
                         {d.formato && <div style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: "#8A8270" }}>{d.formato}</div>}
                       </div>
-                      <button onClick={() => handleRemoveDeck(d.name, d.formato)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Remover</button>
                     </div>
                   ))}
                 </div>
@@ -867,7 +854,6 @@ function PauperTracker({ user, onSignOut }) {
                   {data.formatos.map((f) => (
                     <div key={f} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F6F1E1", borderRadius: 8, padding: "10px 14px" }}>
                       <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{f}</span>
-                      <button onClick={() => handleRemoveFormato(f)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Remover</button>
                     </div>
                   ))}
                 </div>
