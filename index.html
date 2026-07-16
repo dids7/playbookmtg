@@ -117,6 +117,30 @@ function barColor(wr) {
 
 // ---------- Firestore data layer ----------
 // Catálogo compartilhado: formatos e decks, visível e editável por qualquer usuário logado
+const DEFAULT_PAUPER_DECKS = [
+  "Mono Red Madness", "Grixis Affinity", "Blue Terror", "Jund Wildfire", "Snacker Gates",
+  "Monsters Tron", "Altar Tron", "Mono Red Rally", "Elves", "Dimir Faeries",
+  "Jeskai Ephemerate", "Spy Combo", "White Weenie", "Golgari Gardens", "Rakdos Madness",
+  "Familiars", "Ruby Storm", "Mono-Blue Faeries", "Dimir Terror", "Selesnya Gates",
+  "Gruul Ponza", "Turbo Fog", "Bogles", "Food Gardens", "Black Sacrifice",
+  "Inside Out Combo", "Gruul Ramp", "Glintblade", "Azorius Gates", "Walls Combo",
+  "Izzet Terror", "Ephemerate Tron", "Boros Bully", "Cycle Storm",
+];
+
+async function seedPauperDecksIfNeeded(catalog) {
+  const hasPauperFormat = catalog.formatos.includes("Pauper");
+  const hasPauperDecks = catalog.decks.some((d) => d.formato === "Pauper");
+  if (!hasPauperFormat || hasPauperDecks) return;
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "shared", "catalog");
+  const newDecks = [...catalog.decks, ...DEFAULT_PAUPER_DECKS.map((name) => ({ name, formato: "Pauper" }))];
+  try {
+    await setDoc(ref, { formatos: catalog.formatos, decks: newDecks });
+  } catch (e) {
+    console.error("Erro ao popular decks padrão do Pauper:", e);
+  }
+}
+
 function subscribeSharedCatalog(callback) {
   const { db, doc, onSnapshot } = window.__fb;
   const ref = doc(db, "shared", "catalog");
@@ -334,6 +358,11 @@ function PauperTracker({ user, onSignOut }) {
       setVisible(!next);
     }
   }
+
+  useEffect(() => {
+    if (loading) return;
+    seedPauperDecksIfNeeded({ formatos: data.formatos, decks: data.decks });
+  }, [loading, data.formatos, data.decks]);
 
   async function persistCatalog(nextCatalog) {
     try {
