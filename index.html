@@ -272,6 +272,7 @@ function PauperTracker({ user, onSignOut }) {
   const [error, setError] = useState("");
   const [statsFormato, setStatsFormato] = useState("__all__");
   const [statsDeck, setStatsDeck] = useState("__all__");
+  const [statsTipo, setStatsTipo] = useState("todos"); // todos | treino | torneio
   const [newDeckName, setNewDeckName] = useState("");
   const [newDeckFormato, setNewDeckFormato] = useState("");
   const [deckError, setDeckError] = useState("");
@@ -481,8 +482,9 @@ function PauperTracker({ user, onSignOut }) {
     let list = data.matches;
     if (statsFormato !== "__all__") list = list.filter((m) => m.formato === statsFormato);
     if (statsDeck !== "__all__") list = list.filter((m) => m.meuDeck === statsDeck);
+    if (statsTipo !== "todos") list = list.filter((m) => m.tipo === statsTipo);
     return list;
-  }, [data.matches, statsFormato, statsDeck]);
+  }, [data.matches, statsFormato, statsDeck, statsTipo]);
   const deckOptionsForStats = useMemo(() => {
     const names = statsFormato === "__all__"
       ? data.decks.map((d) => d.name)
@@ -678,6 +680,20 @@ function PauperTracker({ user, onSignOut }) {
                     <option value="__all__">Todos os decks</option>
                     {deckOptionsForStats.map((d) => <option key={d} value={d}>{d}</option>)}
                   </select>
+                </Field>
+
+                <div style={{ height: 12 }} />
+                <Field label="Tipo de partida">
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {[{ key: "todos", label: "Todos" }, { key: "treino", label: "Treino" }, { key: "torneio", label: "Torneio" }].map((o) => (
+                      <button key={o.key} onClick={() => setStatsTipo(o.key)} style={{
+                        flex: 1, padding: "8px 0", borderRadius: 6,
+                        border: statsTipo === o.key ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                        background: statsTipo === o.key ? "#2A2621" : "#F6F1E1",
+                        color: statsTipo === o.key ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
+                      }}>{o.label}</button>
+                    ))}
+                  </div>
                 </Field>
 
                 <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px", margin: "14px 0" }}>
