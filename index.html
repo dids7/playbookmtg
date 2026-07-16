@@ -80,7 +80,7 @@
 </script>
 
 <script type="text/plain" id="app-source">
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useRef } = React;
 
 // ---------- Helpers ----------
 function uid() {
@@ -643,7 +643,7 @@ function PauperTracker({ user, onSignOut }) {
               </>
             )}
             <Field label="Data">
-              <input type="date" value={form.data} onChange={(e) => updateField("data", e.target.value)} style={inputStyle} />
+              <DatePicker value={form.data} onChange={(iso) => updateField("data", iso)} />
             </Field>
             <Field label="Anotação (opcional)">
               <textarea value={form.nota} onChange={(e) => updateField("nota", e.target.value)} placeholder="Jogadas erradas, sideboard que funcionou..." rows={3} style={{ ...inputStyle, resize: "vertical" }} />
@@ -943,6 +943,107 @@ function PauperTracker({ user, onSignOut }) {
 }
 
 // ---------- Small components ----------
+function DatePicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const initial = value ? new Date(value + "T00:00:00") : new Date();
+  const [viewYear, setViewYear] = useState(initial.getFullYear());
+  const [viewMonth, setViewMonth] = useState(initial.getMonth());
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  function pad(n) { return n < 10 ? "0" + n : "" + n; }
+  function isoFor(y, m, d) { return `${y}-${pad(m + 1)}-${pad(d)}`; }
+  function formatDisplay(iso) {
+    if (!iso) return "Selecionar data";
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y}`;
+  }
+  function changeMonth(delta) {
+    let y = viewYear, m = viewMonth + delta;
+    if (m < 0) { m = 11; y -= 1; }
+    if (m > 11) { m = 0; y += 1; }
+    setViewYear(y); setViewMonth(m);
+  }
+
+  const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  const weekDays = ["D", "S", "T", "Q", "Q", "S", "S"];
+  const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const startWeekday = new Date(viewYear, viewMonth, 1).getDay();
+  const todayIso = todayISO();
+
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= totalDays; d++) cells.push(d);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{ ...inputStyle, textAlign: "left", cursor: "pointer", display: "block" }}
+      >
+        {formatDisplay(value)}
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", zIndex: 30, top: "calc(100% + 6px)", left: 0,
+          background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8,
+          padding: 12, width: 260, boxShadow: "0 6px 18px rgba(42,38,33,0.2)",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <button type="button" onClick={() => changeMonth(-1)} style={{ border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#2A2621", fontWeight: 700, padding: "0 8px" }}>‹</button>
+            <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 14 }}>{monthNames[viewMonth]} {viewYear}</span>
+            <button type="button" onClick={() => changeMonth(1)} style={{ border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#2A2621", fontWeight: 700, padding: "0 8px" }}>›</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+            {weekDays.map((w, i) => (
+              <div key={i} style={{ textAlign: "center", fontSize: 10, color: "#8A8270", fontWeight: 700 }}>{w}</div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+            {cells.map((day, i) => {
+              if (day === null) return <div key={i} />;
+              const iso = isoFor(viewYear, viewMonth, day);
+              const isSelected = iso === value;
+              const isToday = iso === todayIso;
+              return (
+                <button
+                  type="button"
+                  key={i}
+                  onClick={() => { onChange(iso); setOpen(false); }}
+                  style={{
+                    width: 32, height: 32, borderRadius: 6,
+                    border: isToday && !isSelected ? "1px solid #B15C3E" : "1px solid transparent",
+                    background: isSelected ? "#2A2621" : "transparent",
+                    color: isSelected ? "#EFE9D8" : "#2A2621",
+                    fontSize: 12, fontWeight: isSelected ? 700 : 500, cursor: "pointer",
+                  }}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => { onChange(todayIso); setOpen(false); }}
+            style={{ marginTop: 10, width: "100%", padding: "6px 0", borderRadius: 6, border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+          >
+            Hoje
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GameRow({ label, game, onChange }) {
   return (
     <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px" }}>
