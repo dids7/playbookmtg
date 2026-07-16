@@ -513,20 +513,18 @@ function PauperTracker({ user, onSignOut }) {
   const chartData = matchupStats.map((m) => ({ name: m.opp, winRate: m.winRate, total: m.total }));
   const totalGamesForPie = chartData.reduce((s, d) => s + d.total, 0);
   const pieData = chartData.map((d) => ({ ...d, percent: totalGamesForPie ? Math.round((d.total / totalGamesForPie) * 100) : 0 }));
-  const [teamStatsFilter, setTeamStatsFilter] = useState("todos"); // todos | torneio
   const [teamStatsFormato, setTeamStatsFormato] = useState("__all__");
 
   const combinedMatches = useMemo(() => {
-    const own = visible ? data.matches : [];
-    const others = teamPlayers.flatMap((p) => p.matches);
+    const own = visible ? data.matches.filter((m) => m.tipo === "torneio") : [];
+    const others = teamPlayers.flatMap((p) => p.matches.filter((m) => m.tipo === "torneio"));
     return [...own, ...others];
   }, [visible, data.matches, teamPlayers]);
   const teamFilteredMatches = useMemo(() => {
     let list = combinedMatches;
-    if (teamStatsFilter === "torneio") list = list.filter((m) => m.tipo === "torneio");
     if (teamStatsFormato !== "__all__") list = list.filter((m) => m.formato === teamStatsFormato);
     return list;
-  }, [combinedMatches, teamStatsFilter, teamStatsFormato]);
+  }, [combinedMatches, teamStatsFormato]);
   const teamStats = useMemo(() => computeMatchStats(teamFilteredMatches), [teamFilteredMatches]);
   const contributingCount = teamPlayers.length + (visible ? 1 : 0);
 
@@ -875,17 +873,7 @@ function PauperTracker({ user, onSignOut }) {
             {contributingCount > 0 && (
               <>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <SectionLabel>Estatísticas do time</SectionLabel>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {[{ key: "todos", label: "Todos" }, { key: "torneio", label: "Só torneios" }].map((o) => (
-                      <button key={o.key} onClick={() => setTeamStatsFilter(o.key)} style={{
-                        padding: "5px 10px", borderRadius: 6,
-                        border: teamStatsFilter === o.key ? "2px solid #2A2621" : "1px solid #C9C0A6",
-                        background: teamStatsFilter === o.key ? "#2A2621" : "#F6F1E1",
-                        color: teamStatsFilter === o.key ? "#EFE9D8" : "#6E6656", fontSize: 11, fontWeight: 700, cursor: "pointer",
-                      }}>{o.label}</button>
-                    ))}
-                  </div>
+                  <SectionLabel>Estatísticas do time (torneios)</SectionLabel>
                 </div>
 
                 <Field label="Formato">
@@ -922,7 +910,7 @@ function PauperTracker({ user, onSignOut }) {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {teamPlayers.map((p) => {
-                  const s = computeMatchStats(p.matches);
+                  const s = computeMatchStats(p.matches.filter((m) => m.tipo === "torneio"));
                   const isSelected = selectedPlayerUid === p.uid;
                   return (
                     <div key={p.uid} style={{ background: "#F6F1E1", borderRadius: 8, padding: "12px 14px" }}>
