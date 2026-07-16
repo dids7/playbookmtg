@@ -28,7 +28,7 @@
     getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
   const {
-    getFirestore, doc, getDoc, setDoc
+    getFirestore, doc, getDoc, setDoc, onSnapshot
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
   const firebaseConfig = {
@@ -45,7 +45,7 @@
     auth: getAuth(app),
     provider: new GoogleAuthProvider(),
     db: getFirestore(app),
-    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc,
+    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot,
   };
   window.__fbReady = true;
   window.dispatchEvent(new Event("firebase-ready"));
@@ -89,23 +89,41 @@ function barColor(wr) {
 }
 
 // ---------- Firestore data layer ----------
-async function loadData(uidStr) {
+// Catálogo compartilhado: formatos e decks, visível e editável por qualquer usuário logado
+function subscribeSharedCatalog(callback) {
+  const { db, doc, onSnapshot } = window.__fb;
+  const ref = doc(db, "shared", "catalog");
+  return onSnapshot(ref, (snap) => {
+    if (snap.exists()) {
+      const d = snap.data();
+      const decksRaw = d.decks || [];
+      const decks = decksRaw.map((dk) => (typeof dk === "string" ? { name: dk, formato: "" } : dk));
+      callback({ formatos: d.formatos || [], decks });
+    } else {
+      callback({ formatos: [], decks: [] });
+    }
+  }, (err) => {
+    console.error("Erro ao sincronizar catálogo compartilhado:", err);
+  });
+}
+async function saveSharedCatalog(catalog) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "shared", "catalog");
+  await setDoc(ref, catalog);
+}
+
+// Partidas: pessoais, isoladas por usuário
+async function loadMatches(uidStr) {
   const { db, doc, getDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
   const snap = await getDoc(ref);
-  if (snap.exists()) {
-    const d = snap.data();
-    const decksRaw = d.decks || [];
-    // Migração: decks antigos eram strings soltas, sem formato
-    const decks = decksRaw.map((dk) => (typeof dk === "string" ? { name: dk, formato: "" } : dk));
-    return { formatos: d.formatos || [], decks, matches: d.matches || [] };
-  }
-  return { formatos: [], decks: [], matches: [] };
+  if (snap.exists()) return snap.data().matches || [];
+  return [];
 }
-async function saveData(uidStr, data) {
+async function saveMatches(uidStr, matches) {
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
-  await setDoc(ref, data);
+  await setDoc(ref, { matches });
 }
 
 // ---------- Auth gate ----------
@@ -194,21 +212,43 @@ function PauperTracker({ user, onSignOut }) {
   const [chartType, setChartType] = useState("bar");
 
   useEffect(() => {
+    let matchesLoaded = false;
+    let catalogLoaded = false;
+    const checkDone = () => { if (matchesLoaded && catalogLoaded) setLoading(false); };
+
+    const unsubscribe = subscribeSharedCatalog((catalog) => {
+      setData((prev) => ({ ...prev, formatos: catalog.formatos, decks: catalog.decks }));
+      catalogLoaded = true;
+      checkDone();
+    });
+
     (async () => {
       try {
-        const d = await loadData(user.uid);
-        setData(d);
+        const matches = await loadMatches(user.uid);
+        setData((prev) => ({ ...prev, matches }));
       } catch (e) {
-        setError("Não consegui carregar seus dados: " + (e && e.message ? e.message : "erro"));
+        setError("Não consegui carregar suas partidas: " + (e && e.message ? e.message : "erro"));
       } finally {
-        setLoading(false);
+        matchesLoaded = true;
+        checkDone();
       }
     })();
+
+    return () => unsubscribe();
   }, [user.uid]);
 
-  async function persist(next) {
+  async function persistCatalog(nextCatalog) {
     try {
-      await saveData(user.uid, next);
+      await saveSharedCatalog(nextCatalog);
+      return true;
+    } catch (e) {
+      setError("Não consegui salvar no catálogo compartilhado: " + (e && e.message ? e.message : "erro desconhecido"));
+      return false;
+    }
+  }
+  async function persistMatches(nextMatches) {
+    try {
+      await saveMatches(user.uid, nextMatches);
       return true;
     } catch (e) {
       setError("Não consegui salvar: " + (e && e.message ? e.message : "erro desconhecido"));
@@ -235,15 +275,15 @@ function PauperTracker({ user, onSignOut }) {
     if (!name) { setFormatoError("Digita um nome pro formato."); return; }
     if (data.formatos.some((f) => f.toLowerCase() === name.toLowerCase())) { setFormatoError("Esse formato já está cadastrado."); return; }
     setFormatoError("");
-    const next = { ...data, formatos: [...data.formatos, name] };
-    setData(next);
+    const nextCatalog = { formatos: [...data.formatos, name], decks: data.decks };
+    setData((prev) => ({ ...prev, formatos: nextCatalog.formatos }));
     setNewFormatoName("");
-    await persist(next);
+    await persistCatalog(nextCatalog);
   }
   async function handleRemoveFormato(name) {
-    const next = { ...data, formatos: data.formatos.filter((f) => f !== name) };
-    setData(next);
-    await persist(next);
+    const nextCatalog = { formatos: data.formatos.filter((f) => f !== name), decks: data.decks };
+    setData((prev) => ({ ...prev, formatos: nextCatalog.formatos }));
+    await persistCatalog(nextCatalog);
   }
 
   async function handleAddDeck() {
@@ -252,15 +292,15 @@ function PauperTracker({ user, onSignOut }) {
     if (!newDeckFormato) { setDeckError("Escolhe o formato desse deck."); return; }
     if (data.decks.some((d) => d.name.toLowerCase() === name.toLowerCase() && d.formato === newDeckFormato)) { setDeckError("Esse deck já está cadastrado nesse formato."); return; }
     setDeckError("");
-    const next = { ...data, decks: [...data.decks, { name, formato: newDeckFormato }] };
-    setData(next);
+    const nextCatalog = { formatos: data.formatos, decks: [...data.decks, { name, formato: newDeckFormato }] };
+    setData((prev) => ({ ...prev, decks: nextCatalog.decks }));
     setNewDeckName("");
-    await persist(next);
+    await persistCatalog(nextCatalog);
   }
   async function handleRemoveDeck(name, formato) {
-    const next = { ...data, decks: data.decks.filter((d) => !(d.name === name && d.formato === formato)) };
-    setData(next);
-    await persist(next);
+    const nextCatalog = { formatos: data.formatos, decks: data.decks.filter((d) => !(d.name === name && d.formato === formato)) };
+    setData((prev) => ({ ...prev, decks: nextCatalog.decks }));
+    await persistCatalog(nextCatalog);
   }
 
   function startEdit(match) {
@@ -280,10 +320,10 @@ function PauperTracker({ user, onSignOut }) {
     setError("");
   }
   async function handleDelete(id) {
-    const next = { ...data, matches: data.matches.filter((m) => m.id !== id) };
-    setData(next);
+    const nextMatches = data.matches.filter((m) => m.id !== id);
+    setData((prev) => ({ ...prev, matches: nextMatches }));
     setConfirmDeleteId(null);
-    await persist(next);
+    await persistMatches(nextMatches);
   }
 
   async function handleSave() {
@@ -314,10 +354,9 @@ function PauperTracker({ user, onSignOut }) {
       const nextMatches = editingId
         ? data.matches.map((m) => (m.id === editingId ? matchPayload : m))
         : [...data.matches, matchPayload];
-      const next = { formatos: data.formatos, decks: data.decks, matches: nextMatches };
 
-      const ok = await persist(next);
-      setData(next);
+      const ok = await persistMatches(nextMatches);
+      setData((prev) => ({ ...prev, matches: nextMatches }));
       if (ok) {
         if (editingId) {
           setEditingId(null); setForm(emptyForm()); setScreen("estatisticas");
