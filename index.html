@@ -600,6 +600,17 @@ function PauperTracker({ user, onSignOut }) {
   }
 
   const deckOptionsForForm = data.decks.filter((d) => d.formato === form.formato).map((d) => d.name);
+  const meuDeckOptions = useMemo(() => {
+    return [...deckOptionsForForm].sort((a, b) => {
+      const aOwned = ownedDecks.includes(deckKey(form.formato, a)) ? 0 : 1;
+      const bOwned = ownedDecks.includes(deckKey(form.formato, b)) ? 0 : 1;
+      if (aOwned !== bOwned) return aOwned - bOwned;
+      return a.localeCompare(b);
+    });
+  }, [deckOptionsForForm, ownedDecks, form.formato]);
+  const oponenteDeckOptions = useMemo(() => {
+    return [...deckOptionsForForm].sort((a, b) => a.localeCompare(b));
+  }, [deckOptionsForForm]);
   const filteredMatches = useMemo(() => {
     let list = data.matches;
     if (statsFormato !== "__all__") list = list.filter((m) => m.formato === statsFormato);
@@ -716,7 +727,9 @@ function PauperTracker({ user, onSignOut }) {
               ) : (
                 <select value={form.meuDeck} onChange={(e) => updateField("meuDeck", e.target.value)} style={inputStyle}>
                   <option value="">Selecione um deck</option>
-                  {deckOptionsForForm.map((d) => <option key={d} value={d}>{d}</option>)}
+                  {meuDeckOptions.map((d) => (
+                    <option key={d} value={d}>{ownedDecks.includes(deckKey(form.formato, d)) ? "★ " + d : d}</option>
+                  ))}
                 </select>
               )}
             </Field>
@@ -728,7 +741,7 @@ function PauperTracker({ user, onSignOut }) {
               ) : (
                 <select value={form.oponenteDeck} onChange={(e) => updateField("oponenteDeck", e.target.value)} style={inputStyle}>
                   <option value="">Selecione um deck</option>
-                  {deckOptionsForForm.map((d) => <option key={d} value={d}>{d}</option>)}
+                  {oponenteDeckOptions.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
               )}
             </Field>
