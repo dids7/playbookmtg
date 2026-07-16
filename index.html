@@ -945,18 +945,43 @@ function PauperTracker({ user, onSignOut }) {
 // ---------- Small components ----------
 function DatePicker({ value, onChange }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [coords, setCoords] = useState(null);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
   const initial = value ? new Date(value + "T00:00:00") : new Date();
   const [viewYear, setViewYear] = useState(initial.getFullYear());
   const [viewMonth, setViewMonth] = useState(initial.getMonth());
 
+  function openPicker() {
+    const rect = btnRef.current.getBoundingClientRect();
+    const popH = 300;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const openUpward = spaceBelow < popH && rect.top > popH;
+    setCoords({
+      left: Math.min(rect.left, window.innerWidth - 268),
+      top: openUpward ? rect.top - popH - 6 : rect.bottom + 6,
+      width: rect.width,
+    });
+    setOpen(true);
+  }
+
   useEffect(() => {
+    if (!open) return;
     function handleClickOutside(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (popRef.current && !popRef.current.contains(e.target) && btnRef.current && !btnRef.current.contains(e.target)) {
+        setOpen(false);
+      }
     }
+    function handleScrollOrResize() { setOpen(false); }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    window.addEventListener("resize", handleScrollOrResize);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+      window.removeEventListener("resize", handleScrollOrResize);
+    };
+  }, [open]);
 
   function pad(n) { return n < 10 ? "0" + n : "" + n; }
   function isoFor(y, m, d) { return `${y}-${pad(m + 1)}-${pad(d)}`; }
@@ -983,20 +1008,24 @@ function DatePicker({ value, onChange }) {
   for (let d = 1; d <= totalDays; d++) cells.push(d);
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <div>
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        style={{ ...inputStyle, textAlign: "left", cursor: "pointer", display: "block" }}
+        ref={btnRef}
+        onClick={() => (open ? setOpen(false) : openPicker())}
+        style={{ ...inputStyle, textAlign: "left", cursor: "pointer", display: "block", width: "100%" }}
       >
         {formatDisplay(value)}
       </button>
-      {open && (
-        <div style={{
-          position: "absolute", zIndex: 30, top: "calc(100% + 6px)", left: 0,
-          background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8,
-          padding: 12, width: 260, boxShadow: "0 6px 18px rgba(42,38,33,0.2)",
-        }}>
+      {open && coords && (
+        <div
+          ref={popRef}
+          style={{
+            position: "fixed", zIndex: 1000, top: coords.top, left: coords.left,
+            background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8,
+            padding: 12, width: 260, boxShadow: "0 6px 18px rgba(42,38,33,0.25)",
+          }}
+        >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <button type="button" onClick={() => changeMonth(-1)} style={{ border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#2A2621", fontWeight: 700, padding: "0 8px" }}>‹</button>
             <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 14 }}>{monthNames[viewMonth]} {viewYear}</span>
