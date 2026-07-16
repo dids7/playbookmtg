@@ -7,9 +7,36 @@
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;700&family=Roboto+Condensed:wght@400;500;700&display=swap');
   * { box-sizing: border-box; }
-  body { margin: 0; background: #EFE9D8; color: #2A2621; font-family: 'Roboto Condensed', sans-serif; }
+  html, body { margin: 0; background: #D9CEB0; color: #2A2621; font-family: 'Roboto Condensed', sans-serif; }
   input, select, textarea, button { font-family: 'Roboto Condensed', sans-serif; }
   input:focus, select:focus, textarea:focus { outline: 2px solid #B15C3E; outline-offset: 1px; }
+
+  .app-shell {
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100vh;
+    background: #EFE9D8;
+    box-shadow: 0 0 0 1px rgba(42,38,33,0.08);
+  }
+  .tab-bar {
+    display: flex;
+    overflow-x: auto;
+    background: #E4DBC0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .tab-bar::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    flex: 0 0 auto;
+    padding: 12px 14px;
+    border: none;
+    font-size: 13px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  @media (max-width: 520px) {
+    .app-shell { max-width: 100%; box-shadow: none; }
+  }
 </style>
 </head>
 <body>
@@ -183,7 +210,7 @@ function useFirebaseReady() {
 
 function LoginScreen({ onSignIn, errorMsg }) {
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
+    <div className="app-shell" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
       <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Multi-formato</div>
       <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 28, margin: "6px 0 24px" }}>Livro de Partidas</h1>
       <button
@@ -487,7 +514,7 @@ function PauperTracker({ user, onSignOut }) {
   const showGame3 = needsGame3(form.games);
 
   return (
-    <div style={{ minHeight: "100vh" }}>
+    <div className="app-shell">
       <div style={{ padding: "18px 16px 10px", borderBottom: "3px solid #2A2621", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Multi-formato</div>
@@ -501,14 +528,13 @@ function PauperTracker({ user, onSignOut }) {
         </div>
       </div>
 
-      <div style={{ display: "flex", background: "#E4DBC0" }}>
+      <div className="tab-bar">
         {[{ key: "registrar", label: "Registrar" }, { key: "estatisticas", label: "Estatísticas" }, { key: "decks", label: "Decks" }, { key: "formatos", label: "Formatos" }, { key: "jogadores", label: "Jogadores" }].map((t) => (
-          <button key={t.key} onClick={() => setScreen(t.key)} style={{
-            flex: 1, padding: "14px 8px", border: "none",
+          <button key={t.key} className="tab-btn" onClick={() => setScreen(t.key)} style={{
             background: screen === t.key ? "#F6F1E1" : "transparent",
             borderBottom: screen === t.key ? "3px solid #B15C3E" : "3px solid transparent",
-            fontSize: 14, fontWeight: screen === t.key ? 700 : 500,
-            color: screen === t.key ? "#2A2621" : "#6E6656", cursor: "pointer",
+            fontWeight: screen === t.key ? 700 : 500,
+            color: screen === t.key ? "#2A2621" : "#6E6656",
           }}>{t.label}</button>
         ))}
       </div>
