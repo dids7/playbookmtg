@@ -207,17 +207,27 @@ function computeMatchStats(matches) {
     .sort((a, b) => b.total - a.total);
   return { total, wins, losses, winRate, chartData };
 }
-async function loadMatches(uidStr) {
+function deckKey(formato, name) { return formato + "||" + name; }
+
+async function loadUserData(uidStr) {
   const { db, doc, getDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
   const snap = await getDoc(ref);
-  if (snap.exists()) return snap.data().matches || [];
-  return [];
+  if (snap.exists()) {
+    const d = snap.data();
+    return { matches: d.matches || [], ownedDecks: d.ownedDecks || [] };
+  }
+  return { matches: [], ownedDecks: [] };
 }
 async function saveMatches(uidStr, matches) {
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
-  await setDoc(ref, { matches });
+  await setDoc(ref, { matches }, { merge: true });
+}
+async function saveOwnedDecks(uidStr, ownedDecks) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "users", uidStr);
+  await setDoc(ref, { ownedDecks }, { merge: true });
 }
 
 // ---------- Auth gate ----------
@@ -298,8 +308,9 @@ function PauperTracker({ user, onSignOut }) {
   const [statsDeck, setStatsDeck] = useState("__all__");
   const [statsTipo, setStatsTipo] = useState("todos"); // todos | treino | torneio
   const [newDeckName, setNewDeckName] = useState("");
-  const [newDeckFormato, setNewDeckFormato] = useState("");
+  const [deckFormatoFilter, setDeckFormatoFilter] = useState("");
   const [deckError, setDeckError] = useState("");
+  const [ownedDecks, setOwnedDecks] = useState([]);
   const [newFormatoName, setNewFormatoName] = useState("");
   const [formatoError, setFormatoError] = useState("");
   const [editingId, setEditingId] = useState(null);
@@ -322,8 +333,9 @@ function PauperTracker({ user, onSignOut }) {
 
     (async () => {
       try {
-        const matches = await loadMatches(user.uid);
-        setData((prev) => ({ ...prev, matches }));
+        const userData = await loadUserData(user.uid);
+        setData((prev) => ({ ...prev, matches: userData.matches }));
+        setOwnedDecks(userData.ownedDecks);
       } catch (e) {
         setError("Não consegui carregar suas partidas: " + (e && e.message ? e.message : "erro"));
       } finally {
@@ -410,13 +422,24 @@ function PauperTracker({ user, onSignOut }) {
   async function handleAddDeck() {
     const name = newDeckName.trim();
     if (!name) { setDeckError("Digita um nome pro deck."); return; }
-    if (!newDeckFormato) { setDeckError("Escolhe o formato desse deck."); return; }
-    if (data.decks.some((d) => d.name.toLowerCase() === name.toLowerCase() && d.formato === newDeckFormato)) { setDeckError("Esse deck já está cadastrado nesse formato."); return; }
+    if (!deckFormatoFilter) { setDeckError("Escolhe o formato primeiro."); return; }
+    if (data.decks.some((d) => d.name.toLowerCase() === name.toLowerCase() && d.formato === deckFormatoFilter)) { setDeckError("Esse deck já está cadastrado nesse formato."); return; }
     setDeckError("");
-    const nextCatalog = { formatos: data.formatos, decks: [...data.decks, { name, formato: newDeckFormato }] };
+    const nextCatalog = { formatos: data.formatos, decks: [...data.decks, { name, formato: deckFormatoFilter }] };
     setData((prev) => ({ ...prev, decks: nextCatalog.decks }));
     setNewDeckName("");
     await persistCatalog(nextCatalog);
+  }
+
+  async function toggleOwnedDeck(formato, name) {
+    const key = deckKey(formato, name);
+    const next = ownedDecks.includes(key) ? ownedDecks.filter((k) => k !== key) : [...ownedDecks, key];
+    setOwnedDecks(next);
+    try {
+      await saveOwnedDecks(user.uid, next);
+    } catch (e) {
+      setError("Não consegui salvar: " + (e && e.message ? e.message : "erro desconhecido"));
+    }
   }
   function startEdit(match) {
     setForm({
@@ -544,6 +567,16 @@ function PauperTracker({ user, onSignOut }) {
   }, [combinedMatches, teamStatsFormato]);
   const teamStats = useMemo(() => computeMatchStats(teamFilteredMatches), [teamFilteredMatches]);
   const contributingCount = teamPlayers.length + (visible ? 1 : 0);
+
+  const sortedDeckList = useMemo(() => {
+    const list = data.decks.filter((d) => d.formato === deckFormatoFilter);
+    return [...list].sort((a, b) => {
+      const aOwned = ownedDecks.includes(deckKey(a.formato, a.name)) ? 0 : 1;
+      const bOwned = ownedDecks.includes(deckKey(b.formato, b.name)) ? 0 : 1;
+      if (aOwned !== bOwned) return aOwned - bOwned;
+      return a.name.localeCompare(b.name);
+    });
+  }, [data.decks, deckFormatoFilter, ownedDecks]);
 
   const showGame3 = needsGame3(form.games);
 
@@ -794,43 +827,63 @@ function PauperTracker({ user, onSignOut }) {
 
         {!loading && screen === "decks" && (
           <div>
-            <Field label="Formato do deck">
+            <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 16 }}>
+              Escolha um formato pra ver os decks cadastrados. Clique num deck pra marcar que você possui ele — os seus sobem pro topo da lista.
+            </div>
+
+            <Field label="Formato">
               {data.formatos.length === 0 ? (
                 <div style={{ fontSize: 13, color: "#8A3F35" }}>Cadastra um formato na aba "Formatos" primeiro.</div>
               ) : (
-                <select value={newDeckFormato} onChange={(e) => setNewDeckFormato(e.target.value)} style={inputStyle}>
+                <select value={deckFormatoFilter} onChange={(e) => setDeckFormatoFilter(e.target.value)} style={inputStyle}>
                   <option value="">Selecione um formato</option>
                   {data.formatos.map((f) => <option key={f} value={f}>{f}</option>)}
                 </select>
               )}
             </Field>
-            <div style={{ height: 10 }} />
-            <Field label="Adicionar deck">
-              <div style={{ display: "flex", gap: 8 }}>
-                <input value={newDeckName} onChange={(e) => setNewDeckName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleAddDeck(); }}
-                  placeholder="Ex: Boros Aggro" style={{ ...inputStyle, flex: 1 }} />
-                <button onClick={handleAddDeck} style={{ padding: "0 18px", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Adicionar</button>
-              </div>
-            </Field>
-            {deckError && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 8 }}>{deckError}</div>}
-            <div style={{ marginTop: 16 }}>
-              <SectionLabel>Decks cadastrados ({data.decks.length})</SectionLabel>
-              {data.decks.length === 0 ? (
-                <div style={{ color: "#6E6656", fontSize: 14, padding: "20px 0", textAlign: "center" }}>Nenhum deck cadastrado ainda.</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {data.decks.map((d, i) => (
-                    <div key={d.name + d.formato + i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F6F1E1", borderRadius: 8, padding: "10px 14px" }}>
-                      <div>
-                        <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{d.name}</span>
-                        {d.formato && <div style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: "#8A8270" }}>{d.formato}</div>}
-                      </div>
+
+            {deckFormatoFilter && (
+              <>
+                <div style={{ height: 16 }} />
+                <Field label="Adicionar deck">
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input value={newDeckName} onChange={(e) => setNewDeckName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleAddDeck(); }}
+                      placeholder="Ex: Boros Aggro" style={{ ...inputStyle, flex: 1 }} />
+                    <button onClick={handleAddDeck} style={{ padding: "0 18px", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Adicionar</button>
+                  </div>
+                </Field>
+                {deckError && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 8 }}>{deckError}</div>}
+
+                <div style={{ marginTop: 16 }}>
+                  <SectionLabel>Decks de {deckFormatoFilter} ({sortedDeckList.length})</SectionLabel>
+                  {sortedDeckList.length === 0 ? (
+                    <div style={{ color: "#6E6656", fontSize: 14, padding: "20px 0", textAlign: "center" }}>Nenhum deck cadastrado nesse formato ainda.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {sortedDeckList.map((d) => {
+                        const owned = ownedDecks.includes(deckKey(d.formato, d.name));
+                        return (
+                          <div
+                            key={d.name}
+                            onClick={() => toggleOwnedDeck(d.formato, d.name)}
+                            style={{
+                              display: "flex", justifyContent: "space-between", alignItems: "center",
+                              background: owned ? "#2A2621" : "#F6F1E1",
+                              borderRadius: 8, padding: "12px 14px", cursor: "pointer",
+                              border: owned ? "2px solid #B15C3E" : "1px solid transparent",
+                            }}
+                          >
+                            <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15, color: owned ? "#EFE9D8" : "#2A2621" }}>{d.name}</span>
+                            {owned && <span style={{ fontSize: 11, fontWeight: 700, color: "#B15C3E" }}>✓ Meu deck</span>}
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         )}
 
