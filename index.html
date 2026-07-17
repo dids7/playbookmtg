@@ -1353,47 +1353,46 @@ function GameRow({ label, game, onChange }) {
   return (
     <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px" }}>
       <div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 8 }}>{label}</div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4 }}>
           <button onClick={() => onChange({ resultado: "vitoria" })} style={{
-            width: 40, height: 36, borderRadius: 6,
+            width: 32, height: 32, borderRadius: 6,
             border: game.resultado === "vitoria" ? "2px solid #2A2621" : "1px solid #C9C0A6",
             background: game.resultado === "vitoria" ? "#4B6B4E" : "#EFE9D8",
-            color: game.resultado === "vitoria" ? "#EFE9D8" : "#4B6B4E", fontWeight: 700, fontSize: 15, cursor: "pointer",
+            color: game.resultado === "vitoria" ? "#EFE9D8" : "#4B6B4E", fontWeight: 700, fontSize: 14, cursor: "pointer", padding: 0,
           }}>V</button>
           <button onClick={() => onChange({ resultado: "derrota" })} style={{
-            width: 40, height: 36, borderRadius: 6,
+            width: 32, height: 32, borderRadius: 6,
             border: game.resultado === "derrota" ? "2px solid #2A2621" : "1px solid #C9C0A6",
             background: game.resultado === "derrota" ? "#8A3F35" : "#EFE9D8",
-            color: game.resultado === "derrota" ? "#EFE9D8" : "#8A3F35", fontWeight: 700, fontSize: 15, cursor: "pointer",
+            color: game.resultado === "derrota" ? "#EFE9D8" : "#8A3F35", fontWeight: 700, fontSize: 14, cursor: "pointer", padding: 0,
           }}>D</button>
         </div>
-        <div style={{ width: 1, height: 28, background: "#C9C0A6", margin: "0 4px" }} />
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <span style={{ fontSize: 11, color: "#8A8270", marginRight: 2 }}>Mull</span>
+        <div style={{ width: 1, height: 24, background: "#C9C0A6", margin: "0 2px" }} />
+        <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
           {[0, 1, 2, 3].map((n) => (
-            <button key={n} onClick={() => onChange({ mulligan: n })} style={{
-              width: 30, height: 30, borderRadius: 6,
+            <button key={n} onClick={() => onChange({ mulligan: n })} title="Mulligan" style={{
+              width: 26, height: 26, borderRadius: 6, padding: 0,
               border: game.mulligan === n ? "2px solid #2A2621" : "1px solid #C9C0A6",
               background: game.mulligan === n ? "#2A2621" : "#EFE9D8",
-              color: game.mulligan === n ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
+              color: game.mulligan === n ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 11, cursor: "pointer",
             }}>{n === 3 ? "3+" : n}</button>
           ))}
         </div>
-        <div style={{ width: 1, height: 28, background: "#C9C0A6", margin: "0 4px" }} />
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <button onClick={() => onChange({ playDraw: "play" })} style={{
-            padding: "0 10px", height: 30, borderRadius: 6,
+        <div style={{ width: 1, height: 24, background: "#C9C0A6", margin: "0 2px" }} />
+        <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+          <button onClick={() => onChange({ playDraw: "play" })} title="Jogou primeiro" style={{
+            width: 26, height: 26, borderRadius: 6, padding: 0,
             border: game.playDraw === "play" ? "2px solid #2A2621" : "1px solid #C9C0A6",
             background: game.playDraw === "play" ? "#2A2621" : "#EFE9D8",
             color: game.playDraw === "play" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 11, cursor: "pointer",
-          }}>Play</button>
-          <button onClick={() => onChange({ playDraw: "draw" })} style={{
-            padding: "0 10px", height: 30, borderRadius: 6,
+          }}>1º</button>
+          <button onClick={() => onChange({ playDraw: "draw" })} title="Jogou segundo" style={{
+            width: 26, height: 26, borderRadius: 6, padding: 0,
             border: game.playDraw === "draw" ? "2px solid #2A2621" : "1px solid #C9C0A6",
             background: game.playDraw === "draw" ? "#2A2621" : "#EFE9D8",
             color: game.playDraw === "draw" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 11, cursor: "pointer",
-          }}>Draw</button>
+          }}>2º</button>
         </div>
       </div>
     </div>
