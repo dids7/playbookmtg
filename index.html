@@ -174,30 +174,6 @@ async function loadUserTeam(uidStr) {
   return { teamId, name: teamSnap.data().name, inviteCode: teamSnap.data().inviteCode };
 }
 
-// Migração única: puxa o catálogo de decks antigo (shared/catalog) e a visibilidade
-// antiga de jogador (players/{uid}), cria um time novo com esses dados dentro.
-async function migrateOldDataToTeam(uidStr, displayName, teamName) {
-  const { db, doc, getDoc } = window.__fb;
-
-  const oldCatalogSnap = await getDoc(doc(db, "shared", "catalog"));
-  const oldDecksRaw = oldCatalogSnap.exists() ? (oldCatalogSnap.data().decks || []) : [];
-  const oldDecks = oldDecksRaw.map((dk) => (typeof dk === "string" ? { name: dk, formato: "" } : dk));
-
-  const oldPlayerSnap = await getDoc(doc(db, "players", uidStr));
-  const oldPlayerData = oldPlayerSnap.exists() ? oldPlayerSnap.data() : null;
-
-  const { teamId, inviteCode } = await createTeam(uidStr, teamName);
-
-  if (oldDecks.length > 0) {
-    await saveSharedDecks(teamId, oldDecks);
-  }
-  if (oldPlayerData && oldPlayerData.visible) {
-    await syncPlayerVisibility(teamId, uidStr, displayName, true, oldPlayerData.matches || []);
-  }
-
-  return { teamId, inviteCode, decksMigrated: oldDecks.length, visibilityMigrated: !!(oldPlayerData && oldPlayerData.visible) };
-}
-
 async function seedPauperDecksIfNeeded(teamId, decks) {
   const hasPauperDecks = decks.some((d) => d.formato === "Pauper");
   if (hasPauperDecks) return;
@@ -473,13 +449,11 @@ function App() {
 }
 
 function TeamGate({ user, onSignOut, onTeamReady }) {
-  const [mode, setMode] = useState("choose"); // choose | create | join | migrate | migrated
-  const [teamName, setTeamName] = useState("ZUBers");
+  const [mode, setMode] = useState("choose"); // choose | create | join
+  const [teamName, setTeamName] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [migrationResult, setMigrationResult] = useState(null);
-  const [pendingTeam, setPendingTeam] = useState(null);
 
   async function handleCreate() {
     const name = teamName.trim();
@@ -510,23 +484,6 @@ function TeamGate({ user, onSignOut, onTeamReady }) {
     }
   }
 
-  async function handleMigrate() {
-    const name = teamName.trim();
-    if (!name) { setError("Digita um nome pro time."); return; }
-    setError("");
-    setLoading(true);
-    try {
-      const result = await migrateOldDataToTeam(user.uid, user.displayName || user.email, name);
-      setMigrationResult(result);
-      setPendingTeam({ teamId: result.teamId, name, inviteCode: result.inviteCode });
-      setMode("migrated");
-    } catch (e) {
-      setError("Não consegui migrar: " + (e && e.message ? e.message : "erro"));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
     <div className="app-shell" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", minHeight: "100vh" }}>
       <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Playbook</div>
@@ -539,45 +496,6 @@ function TeamGate({ user, onSignOut, onTeamReady }) {
           </button>
           <button onClick={() => setMode("join")} style={{ padding: "14px", borderRadius: 8, border: "1px solid #C9C0A6", background: "#F6F1E1", color: "#2A2621", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
             Entrar com código de convite
-          </button>
-          <button onClick={() => setMode("migrate")} style={{ padding: "12px", borderRadius: 8, border: "1px dashed #C9C0A6", background: "transparent", color: "#6E6656", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            Já usava a versão antiga? Migrar meus dados
-          </button>
-        </div>
-      )}
-
-      {mode === "migrate" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", maxWidth: 300 }}>
-          <div style={{ fontSize: 13, color: "#6E6656", marginBottom: 4 }}>
-            Isso puxa os decks já cadastrados e cria o time com eles. Use só uma vez — os outros membros entram depois com o código de convite.
-          </div>
-          <input
-            value={teamName}
-            onChange={(e) => setTeamName(e.target.value)}
-            placeholder="Nome do time (ex: ZUBers)"
-            style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #C9C0A6", background: "#F6F1E1", fontSize: 14 }}
-          />
-          <button onClick={handleMigrate} disabled={loading} style={{ padding: "14px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: loading ? 0.7 : 1 }}>
-            {loading ? "Migrando…" : "Migrar dados e criar time"}
-          </button>
-          <button onClick={() => { setMode("choose"); setError(""); }} style={{ background: "transparent", border: "none", color: "#6E6656", fontSize: 13, cursor: "pointer" }}>‹ Voltar</button>
-        </div>
-      )}
-
-      {mode === "migrated" && migrationResult && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", maxWidth: 300 }}>
-          <div style={{ background: "#E4EDE3", borderLeft: "4px solid #4B6B4E", borderRadius: 6, padding: "12px 14px", fontSize: 13, textAlign: "left" }}>
-            <strong>Migração concluída!</strong><br />
-            {migrationResult.decksMigrated} decks migrados.<br />
-            {migrationResult.visibilityMigrated ? "Sua visibilidade de estatísticas foi mantida ativada." : "Sua visibilidade de estatísticas estava desativada (continua assim)."}
-          </div>
-          <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "14px", textAlign: "center" }}>
-            <div style={{ fontSize: 11, color: "#6E6656", textTransform: "uppercase", letterSpacing: 1 }}>Código de convite pro time</div>
-            <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 28, marginTop: 4 }}>{pendingTeam.inviteCode}</div>
-            <div style={{ fontSize: 12, color: "#6E6656", marginTop: 4 }}>Passa esse código pros outros membros usarem "Entrar com código"</div>
-          </div>
-          <button onClick={() => onTeamReady(pendingTeam)} style={{ padding: "14px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-            Continuar pro app
           </button>
         </div>
       )}
