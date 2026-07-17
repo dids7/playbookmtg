@@ -44,6 +44,22 @@
   @media (max-width: 520px) {
     .app-shell { max-width: 100%; box-shadow: none; }
   }
+
+  .gr-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .gr-group { display: flex; align-items: center; gap: 6px; }
+  .gr-divider { width: 1px; height: 28px; background: #C9C0A6; margin: 0 4px; flex-shrink: 0; }
+  .gr-vd { width: 40px; height: 36px; border-radius: 6px; font-weight: 700; font-size: 15px; cursor: pointer; padding: 0; }
+  .gr-num { width: 30px; height: 30px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; padding: 0; }
+  .gr-pd { height: 30px; padding: 0 12px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; white-space: nowrap; }
+
+  @media (max-width: 400px) {
+    .gr-row { gap: 4px; }
+    .gr-group { gap: 3px; }
+    .gr-divider { height: 22px; margin: 0 2px; }
+    .gr-vd { width: 30px; height: 30px; font-size: 12px; }
+    .gr-num { width: 24px; height: 24px; font-size: 10px; }
+    .gr-pd { height: 24px; padding: 0 7px; font-size: 10px; }
+  }
 </style>
 </head>
 <body>
@@ -1353,46 +1369,63 @@ function GameRow({ label, game, onChange }) {
   return (
     <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px" }}>
       <div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 8 }}>{label}</div>
-      <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 4 }}>
-          <button onClick={() => onChange({ resultado: "vitoria" })} style={{
-            width: 32, height: 32, borderRadius: 6,
-            border: game.resultado === "vitoria" ? "2px solid #2A2621" : "1px solid #C9C0A6",
-            background: game.resultado === "vitoria" ? "#4B6B4E" : "#EFE9D8",
-            color: game.resultado === "vitoria" ? "#EFE9D8" : "#4B6B4E", fontWeight: 700, fontSize: 14, cursor: "pointer", padding: 0,
-          }}>V</button>
-          <button onClick={() => onChange({ resultado: "derrota" })} style={{
-            width: 32, height: 32, borderRadius: 6,
-            border: game.resultado === "derrota" ? "2px solid #2A2621" : "1px solid #C9C0A6",
-            background: game.resultado === "derrota" ? "#8A3F35" : "#EFE9D8",
-            color: game.resultado === "derrota" ? "#EFE9D8" : "#8A3F35", fontWeight: 700, fontSize: 14, cursor: "pointer", padding: 0,
-          }}>D</button>
+      <div className="gr-row">
+        <div className="gr-group">
+          <button
+            className="gr-vd"
+            onClick={() => onChange({ resultado: "vitoria" })}
+            style={{
+              border: game.resultado === "vitoria" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+              background: game.resultado === "vitoria" ? "#4B6B4E" : "#EFE9D8",
+              color: game.resultado === "vitoria" ? "#EFE9D8" : "#4B6B4E",
+            }}
+          >V</button>
+          <button
+            className="gr-vd"
+            onClick={() => onChange({ resultado: "derrota" })}
+            style={{
+              border: game.resultado === "derrota" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+              background: game.resultado === "derrota" ? "#8A3F35" : "#EFE9D8",
+              color: game.resultado === "derrota" ? "#EFE9D8" : "#8A3F35",
+            }}
+          >D</button>
         </div>
-        <div style={{ width: 1, height: 24, background: "#C9C0A6", margin: "0 2px" }} />
-        <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+        <div className="gr-divider" />
+        <div className="gr-group">
           {[0, 1, 2, 3].map((n) => (
-            <button key={n} onClick={() => onChange({ mulligan: n })} title="Mulligan" style={{
-              width: 26, height: 26, borderRadius: 6, padding: 0,
-              border: game.mulligan === n ? "2px solid #2A2621" : "1px solid #C9C0A6",
-              background: game.mulligan === n ? "#2A2621" : "#EFE9D8",
-              color: game.mulligan === n ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 11, cursor: "pointer",
-            }}>{n === 3 ? "3+" : n}</button>
+            <button
+              key={n}
+              className="gr-num"
+              title="Mulligan"
+              onClick={() => onChange({ mulligan: n })}
+              style={{
+                border: game.mulligan === n ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                background: game.mulligan === n ? "#2A2621" : "#EFE9D8",
+                color: game.mulligan === n ? "#EFE9D8" : "#2A2621",
+              }}
+            >{n === 3 ? "3+" : n}</button>
           ))}
         </div>
-        <div style={{ width: 1, height: 24, background: "#C9C0A6", margin: "0 2px" }} />
-        <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
-          <button onClick={() => onChange({ playDraw: "play" })} title="Jogou primeiro" style={{
-            width: 26, height: 26, borderRadius: 6, padding: 0,
-            border: game.playDraw === "play" ? "2px solid #2A2621" : "1px solid #C9C0A6",
-            background: game.playDraw === "play" ? "#2A2621" : "#EFE9D8",
-            color: game.playDraw === "play" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 11, cursor: "pointer",
-          }}>1º</button>
-          <button onClick={() => onChange({ playDraw: "draw" })} title="Jogou segundo" style={{
-            width: 26, height: 26, borderRadius: 6, padding: 0,
-            border: game.playDraw === "draw" ? "2px solid #2A2621" : "1px solid #C9C0A6",
-            background: game.playDraw === "draw" ? "#2A2621" : "#EFE9D8",
-            color: game.playDraw === "draw" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 11, cursor: "pointer",
-          }}>2º</button>
+        <div className="gr-divider" />
+        <div className="gr-group">
+          <button
+            className="gr-pd"
+            onClick={() => onChange({ playDraw: "play" })}
+            style={{
+              border: game.playDraw === "play" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+              background: game.playDraw === "play" ? "#2A2621" : "#EFE9D8",
+              color: game.playDraw === "play" ? "#EFE9D8" : "#2A2621",
+            }}
+          >Play</button>
+          <button
+            className="gr-pd"
+            onClick={() => onChange({ playDraw: "draw" })}
+            style={{
+              border: game.playDraw === "draw" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+              background: game.playDraw === "draw" ? "#2A2621" : "#EFE9D8",
+              color: game.playDraw === "draw" ? "#EFE9D8" : "#2A2621",
+            }}
+          >Draw</button>
         </div>
       </div>
     </div>
