@@ -277,9 +277,9 @@ async function loadUserData(uidStr) {
   const snap = await getDoc(ref);
   if (snap.exists()) {
     const d = snap.data();
-    return { matches: d.matches || [], ownedDecks: d.ownedDecks || [] };
+    return { matches: d.matches || [], ownedDecks: d.ownedDecks || [], sideboards: d.sideboards || [] };
   }
-  return { matches: [], ownedDecks: [] };
+  return { matches: [], ownedDecks: [], sideboards: [] };
 }
 async function saveMatches(uidStr, matches) {
   const { db, doc, setDoc } = window.__fb;
@@ -290,6 +290,11 @@ async function saveOwnedDecks(uidStr, ownedDecks) {
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
   await setDoc(ref, { ownedDecks }, { merge: true });
+}
+async function saveSideboards(uidStr, sideboards) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "users", uidStr);
+  await setDoc(ref, { sideboards }, { merge: true });
 }
 
 // ---------- Auth gate ----------
@@ -575,6 +580,13 @@ function PauperTracker({ user, team, onSignOut }) {
   const [visible, setVisible] = useState(false);
   const [teamPlayers, setTeamPlayers] = useState([]);
   const [selectedPlayerUid, setSelectedPlayerUid] = useState(null);
+  const [sideboards, setSideboards] = useState([]);
+  const [sbFormato, setSbFormato] = useState("");
+  const [sbDeck, setSbDeck] = useState("");
+  const [sbEditingId, setSbEditingId] = useState(null);
+  const [sbForm, setSbForm] = useState(null);
+  const [sbSelected, setSbSelected] = useState([]);
+  const [sbError, setSbError] = useState("");
 
   useEffect(() => {
     let matchesLoaded = false;
@@ -592,6 +604,7 @@ function PauperTracker({ user, team, onSignOut }) {
         const userData = await loadUserData(user.uid);
         setData((prev) => ({ ...prev, matches: userData.matches }));
         setOwnedDecks(userData.ownedDecks);
+        setSideboards(userData.sideboards);
       } catch (e) {
         setError("Não consegui carregar suas partidas: " + (e && e.message ? e.message : "erro"));
       } finally {
@@ -687,6 +700,107 @@ function PauperTracker({ user, team, onSignOut }) {
       setError("Não consegui salvar: " + (e && e.message ? e.message : "erro desconhecido"));
     }
   }
+
+  function emptySbForm() {
+    return { oponente: "", tirar: [{ qtd: 1, carta: "" }], colocar: [{ qtd: 1, carta: "" }] };
+  }
+  function openNewSbForm() {
+    setSbForm(emptySbForm());
+    setSbEditingId(null);
+    setSbError("");
+  }
+  function openEditSbForm(entry) {
+    setSbForm({ oponente: entry.oponente, tirar: entry.tirar.map((c) => ({ ...c })), colocar: entry.colocar.map((c) => ({ ...c })) });
+    setSbEditingId(entry.id);
+    setSbError("");
+  }
+  function cancelSbForm() {
+    setSbForm(null);
+    setSbEditingId(null);
+    setSbError("");
+  }
+  function updateSbCard(listName, index, field, value) {
+    setSbForm((f) => {
+      const list = f[listName].map((c, i) => (i === index ? { ...c, [field]: value } : c));
+      return { ...f, [listName]: list };
+    });
+  }
+  function addSbCardRow(listName) {
+    setSbForm((f) => ({ ...f, [listName]: [...f[listName], { qtd: 1, carta: "" }] }));
+  }
+  function removeSbCardRow(listName, index) {
+    setSbForm((f) => ({ ...f, [listName]: f[listName].filter((_, i) => i !== index) }));
+  }
+
+  async function saveSbEntry() {
+    if (!sbForm.oponente) { setSbError("Escolhe o deck adversário."); return; }
+    const cleanTirar = sbForm.tirar.filter((c) => c.carta.trim());
+    const cleanColocar = sbForm.colocar.filter((c) => c.carta.trim());
+    if (cleanTirar.length === 0 && cleanColocar.length === 0) { setSbError("Adiciona pelo menos uma carta pra tirar ou colocar."); return; }
+    setSbError("");
+
+    const entry = {
+      id: sbEditingId || uid(),
+      formato: sbFormato,
+      deck: sbDeck,
+      oponente: sbForm.oponente,
+      tirar: cleanTirar,
+      colocar: cleanColocar,
+    };
+    const next = sbEditingId
+      ? sideboards.map((s) => (s.id === sbEditingId ? entry : s))
+      : [...sideboards, entry];
+    setSideboards(next);
+    setSbForm(null);
+    setSbEditingId(null);
+    try {
+      await saveSideboards(user.uid, next);
+    } catch (e) {
+      setError("Não consegui salvar o sideboard: " + (e && e.message ? e.message : "erro"));
+    }
+  }
+
+  async function deleteSbEntry(id) {
+    const next = sideboards.filter((s) => s.id !== id);
+    setSideboards(next);
+    setSbSelected((prev) => prev.filter((s) => s !== id));
+    try {
+      await saveSideboards(user.uid, next);
+    } catch (e) {
+      setError("Não consegui apagar: " + (e && e.message ? e.message : "erro"));
+    }
+  }
+
+  function toggleSbSelected(id) {
+    setSbSelected((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
+  }
+
+  function formatCardList(list) {
+    return list.map((c) => `${c.qtd}x ${c.carta}`).join(", ");
+  }
+
+  function generateSbTxt(entries, deckName) {
+    const lines = [];
+    lines.push(`SIDEBOARD — ${deckName}`);
+    lines.push(`Gerado em ${new Date().toLocaleDateString("pt-BR")}`);
+    lines.push("");
+    entries.forEach((e) => {
+      lines.push(`VS ${e.oponente.toUpperCase()}`);
+      lines.push(`Tirar: ${e.tirar.length ? formatCardList(e.tirar) : "-"}`);
+      lines.push(`Colocar: ${e.colocar.length ? formatCardList(e.colocar) : "-"}`);
+      lines.push("");
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sideboard-${deckName.replace(/\s+/g, "-").toLowerCase()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   function startEdit(match) {
     setForm({
       formato: match.formato || "", meuDeck: match.meuDeck, oponenteDeck: match.oponenteDeck,
@@ -847,6 +961,25 @@ function PauperTracker({ user, team, onSignOut }) {
     });
   }, [data.decks, deckFormatoFilter, ownedDecks]);
 
+  const sbMyDeckOptions = useMemo(() => {
+    return data.decks
+      .filter((d) => d.formato === sbFormato && ownedDecks.includes(deckKey(d.formato, d.name)))
+      .map((d) => d.name)
+      .sort((a, b) => a.localeCompare(b));
+  }, [data.decks, sbFormato, ownedDecks]);
+  const sbOpponentOptions = useMemo(() => {
+    return data.decks.filter((d) => d.formato === sbFormato).map((d) => d.name).sort((a, b) => a.localeCompare(b));
+  }, [data.decks, sbFormato]);
+  const sbEntriesForDeck = useMemo(() => {
+    return sideboards
+      .filter((s) => s.formato === sbFormato && s.deck === sbDeck)
+      .sort((a, b) => a.oponente.localeCompare(b.oponente));
+  }, [sideboards, sbFormato, sbDeck]);
+  const sbPlanForRegistro = useMemo(() => {
+    if (!form.formato || !form.meuDeck || !form.oponenteDeck) return null;
+    return sideboards.find((s) => s.formato === form.formato && s.deck === form.meuDeck && s.oponente === form.oponenteDeck) || null;
+  }, [sideboards, form.formato, form.meuDeck, form.oponenteDeck]);
+
   const showGame3 = needsGame3(form.games);
 
   return (
@@ -866,7 +999,7 @@ function PauperTracker({ user, team, onSignOut }) {
       </div>
 
       <div className="tab-bar">
-        {[{ key: "registrar", label: "Registrar" }, { key: "estatisticas", label: "Estatísticas" }, { key: "decks", label: "Decks" }, { key: "jogadores", label: "Jogadores" }].map((t) => (
+        {[{ key: "registrar", label: "Registrar" }, { key: "sideboard", label: "Sideboard" }, { key: "estatisticas", label: "Estatísticas" }, { key: "decks", label: "Decks" }, { key: "jogadores", label: "Jogadores" }].map((t) => (
           <button key={t.key} className="tab-btn" onClick={() => setScreen(t.key)} style={{
             background: screen === t.key ? "#F6F1E1" : "transparent",
             borderBottom: screen === t.key ? "3px solid #B15C3E" : "3px solid transparent",
@@ -923,6 +1056,14 @@ function PauperTracker({ user, team, onSignOut }) {
               )}
             </Field>
 
+            {sbPlanForRegistro && (
+              <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Plano de side vs {form.oponenteDeck}</div>
+                {sbPlanForRegistro.tirar.length > 0 && <div><strong>Tirar:</strong> {formatCardList(sbPlanForRegistro.tirar)}</div>}
+                {sbPlanForRegistro.colocar.length > 0 && <div><strong>Colocar:</strong> {formatCardList(sbPlanForRegistro.colocar)}</div>}
+              </div>
+            )}
+
             <GameRow label="Jogo 1" game={form.games[0]} onChange={(p) => updateGame(0, p)} />
             <GameRow label="Jogo 2" game={form.games[1]} onChange={(p) => updateGame(1, p)} />
             {showGame3 && (
@@ -975,6 +1116,133 @@ function PauperTracker({ user, team, onSignOut }) {
             }}>
               {savedFlash ? "Salvo ✓" : saving ? "Salvando…" : editingId ? "Atualizar partida" : "Salvar partida"}
             </button>
+          </div>
+        )}
+
+        {!loading && screen === "sideboard" && (
+          <div>
+            <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 16 }}>
+              Cadastre o que tirar/colocar contra cada deck adversário. Isso é só seu — não aparece pro time.
+            </div>
+
+            <Field label="Formato">
+              <select value={sbFormato} onChange={(e) => { setSbFormato(e.target.value); setSbDeck(""); setSbForm(null); setSbSelected([]); }} style={inputStyle}>
+                <option value="">Selecione um formato</option>
+                {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </Field>
+
+            {sbFormato && (
+              <>
+                <div style={{ height: 12 }} />
+                <Field label="Meu deck">
+                  {sbMyDeckOptions.length === 0 ? (
+                    <div style={{ fontSize: 13, color: "#8A3F35" }}>Marca algum deck como seu na aba "Decks" primeiro.</div>
+                  ) : (
+                    <select value={sbDeck} onChange={(e) => { setSbDeck(e.target.value); setSbForm(null); setSbSelected([]); }} style={inputStyle}>
+                      <option value="">Selecione um deck</option>
+                      {sbMyDeckOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  )}
+                </Field>
+              </>
+            )}
+
+            {sbFormato && sbDeck && (
+              <>
+                <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <SectionLabel>Matchups de {sbDeck} ({sbEntriesForDeck.length})</SectionLabel>
+                  {!sbForm && (
+                    <button onClick={openNewSbForm} style={{ border: "none", background: "#2A2621", color: "#EFE9D8", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      + Novo matchup
+                    </button>
+                  )}
+                </div>
+
+                {sbForm && (
+                  <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14, marginTop: 10 }}>
+                    <Field label="Deck adversário">
+                      <select value={sbForm.oponente} onChange={(e) => setSbForm((f) => ({ ...f, oponente: e.target.value }))} style={inputStyle}>
+                        <option value="">Selecione um deck</option>
+                        {sbOpponentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </Field>
+
+                    <div style={{ height: 12 }} />
+                    <div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>Tirar</div>
+                    {sbForm.tirar.map((c, i) => (
+                      <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                        <input type="number" min="1" value={c.qtd} onChange={(e) => updateSbCard("tirar", i, "qtd", parseInt(e.target.value) || 1)} style={{ ...inputStyle, width: 54 }} />
+                        <input value={c.carta} onChange={(e) => updateSbCard("tirar", i, "carta", e.target.value)} placeholder="Nome da carta" style={{ ...inputStyle, flex: 1 }} />
+                        <button onClick={() => removeSbCardRow("tirar", i)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "0 10px", cursor: "pointer" }}>×</button>
+                      </div>
+                    ))}
+                    <button onClick={() => addSbCardRow("tirar")} style={{ border: "1px dashed #C9C0A6", background: "transparent", color: "#6E6656", borderRadius: 6, padding: "6px 10px", fontSize: 12, cursor: "pointer" }}>+ carta</button>
+
+                    <div style={{ height: 14 }} />
+                    <div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>Colocar</div>
+                    {sbForm.colocar.map((c, i) => (
+                      <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                        <input type="number" min="1" value={c.qtd} onChange={(e) => updateSbCard("colocar", i, "qtd", parseInt(e.target.value) || 1)} style={{ ...inputStyle, width: 54 }} />
+                        <input value={c.carta} onChange={(e) => updateSbCard("colocar", i, "carta", e.target.value)} placeholder="Nome da carta" style={{ ...inputStyle, flex: 1 }} />
+                        <button onClick={() => removeSbCardRow("colocar", i)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "0 10px", cursor: "pointer" }}>×</button>
+                      </div>
+                    ))}
+                    <button onClick={() => addSbCardRow("colocar")} style={{ border: "1px dashed #C9C0A6", background: "transparent", color: "#6E6656", borderRadius: 6, padding: "6px 10px", fontSize: 12, cursor: "pointer" }}>+ carta</button>
+
+                    {sbError && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 10 }}>{sbError}</div>}
+
+                    <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                      <button onClick={saveSbEntry} style={{ flex: 1, border: "none", background: "#2A2621", color: "#EFE9D8", borderRadius: 6, padding: "10px 0", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                        Salvar matchup
+                      </button>
+                      <button onClick={cancelSbForm} style={{ flex: 1, border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", borderRadius: 6, padding: "10px 0", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {sbEntriesForDeck.length === 0 && !sbForm && (
+                    <div style={{ color: "#6E6656", fontSize: 14, padding: "16px 0", textAlign: "center" }}>Nenhum matchup cadastrado ainda.</div>
+                  )}
+                  {sbEntriesForDeck.map((entry) => (
+                    <div key={entry.id} style={{ background: "#F6F1E1", borderRadius: 8, padding: "12px 14px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                          <input type="checkbox" checked={sbSelected.includes(entry.id)} onChange={() => toggleSbSelected(entry.id)} />
+                          <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>vs {entry.oponente}</span>
+                        </label>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button onClick={() => openEditSbForm(entry)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#2A2621", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Editar</button>
+                          <button onClick={() => deleteSbEntry(entry.id)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Apagar</button>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#4A4436", marginTop: 6 }}>
+                        {entry.tirar.length > 0 && <div><strong>Tirar:</strong> {formatCardList(entry.tirar)}</div>}
+                        {entry.colocar.length > 0 && <div><strong>Colocar:</strong> {formatCardList(entry.colocar)}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {sbEntriesForDeck.length > 0 && (
+                  <button
+                    onClick={() => generateSbTxt(sbEntriesForDeck.filter((e) => sbSelected.includes(e.id)), sbDeck)}
+                    disabled={sbSelected.length === 0}
+                    style={{
+                      marginTop: 16, width: "100%", padding: "12px", borderRadius: 8, border: "none",
+                      background: sbSelected.length === 0 ? "#C9C0A6" : "#2A2621",
+                      color: "#EFE9D8", fontWeight: 700, fontSize: 14,
+                      cursor: sbSelected.length === 0 ? "default" : "pointer",
+                    }}
+                  >
+                    Gerar lista (.txt) — {sbSelected.length} selecionado{sbSelected.length !== 1 ? "s" : ""}
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )}
 
