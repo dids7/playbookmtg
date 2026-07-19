@@ -142,6 +142,8 @@ function barColor(wr) {
 // Catálogo compartilhado: formatos e decks, visível e editável por qualquer usuário logado
 // Formatos jogados pelo time — lista fixa, só editável aqui no código
 const FORMATOS = ["Pauper", "Duel Commander 500", "Duel Commander", "Premodern", "Legacy"];
+// Formatos com sideboard tradicional (exclui Commander, que não tem G2/G3 com troca de cartas)
+const SIDEBOARD_FORMATOS = ["Pauper", "Premodern", "Legacy"];
 
 const DEFAULT_PAUPER_DECKS = [
   "Mono Red Madness", "Grixis Affinity", "Blue Terror", "Jund Wildfire", "Snacker Gates",
@@ -1128,7 +1130,7 @@ function PauperTracker({ user, team, onSignOut }) {
             <Field label="Formato">
               <select value={sbFormato} onChange={(e) => { setSbFormato(e.target.value); setSbDeck(""); setSbForm(null); setSbSelected([]); }} style={inputStyle}>
                 <option value="">Selecione um formato</option>
-                {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
+                {SIDEBOARD_FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
             </Field>
 
