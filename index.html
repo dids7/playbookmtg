@@ -273,6 +273,155 @@ function computeMatchStats(matches) {
 }
 function deckKey(formato, name) { return formato + "||" + name; }
 
+const MONTH_NAMES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+function monthKey(dateStr) { return dateStr.slice(0, 7); } // "2026-07"
+function monthLabel(key) {
+  const [y, m] = key.split("-");
+  return `${MONTH_NAMES_PT[parseInt(m, 10) - 1]} de ${y}`;
+}
+function prevMonthKey(key) {
+  const [y, m] = key.split("-").map((n) => parseInt(n, 10));
+  const d = new Date(y, m - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function computeMonthlyReport(allMatches, monthKeyStr) {
+  const matches = allMatches.filter((m) => monthKey(m.data) === monthKeyStr);
+  const prevMatches = allMatches.filter((m) => monthKey(m.data) === prevMonthKey(monthKeyStr));
+
+  const total = matches.length;
+  const wins = matches.filter((m) => m.resultado === "vitoria").length;
+  const losses = total - wins;
+  const winRate = total ? Math.round((wins / total) * 100) : 0;
+  const prevWinRate = prevMatches.length ? Math.round((prevMatches.filter((m) => m.resultado === "vitoria").length / prevMatches.length) * 100) : null;
+
+  const byTipo = (tipo) => {
+    const list = matches.filter((m) => m.tipo === tipo);
+    const w = list.filter((m) => m.resultado === "vitoria").length;
+    return { total: list.length, wins: w, winRate: list.length ? Math.round((w / list.length) * 100) : 0 };
+  };
+  const torneio = byTipo("torneio");
+  const treino = byTipo("treino");
+
+  const allGames = matches.flatMap((m) => m.games || []);
+  const byPlayDraw = (pd) => {
+    const list = allGames.filter((g) => g.playDraw === pd);
+    const w = list.filter((g) => g.resultado === "vitoria").length;
+    return { total: list.length, wins: w, winRate: list.length ? Math.round((w / list.length) * 100) : 0 };
+  };
+  const play = byPlayDraw("play");
+  const draw = byPlayDraw("draw");
+
+  const byOpp = {};
+  matches.forEach((m) => {
+    byOpp[m.oponenteDeck] = byOpp[m.oponenteDeck] || { total: 0, wins: 0 };
+    byOpp[m.oponenteDeck].total += 1;
+    if (m.resultado === "vitoria") byOpp[m.oponenteDeck].wins += 1;
+  });
+  const matchupStats = Object.entries(byOpp).map(([opp, v]) => ({
+    opp, total: v.total, wins: v.wins, losses: v.total - v.wins, winRate: Math.round((v.wins / v.total) * 100),
+  })).sort((a, b) => b.total - a.total);
+
+  const bestMatchup = [...matchupStats].filter((m) => m.total >= 2).sort((a, b) => b.winRate - a.winRate)[0] || null;
+  const worstMatchups = [...matchupStats].filter((m) => m.total >= 2).sort((a, b) => a.winRate - b.winRate).slice(0, 3);
+
+  const mirrorMatches = matches.filter((m) => m.meuDeck === m.oponenteDeck);
+  const mirrorWins = mirrorMatches.filter((m) => m.resultado === "vitoria").length;
+
+  const wonG1LostMatch = matches.filter((m) => m.games && m.games[0] && m.games[0].resultado === "vitoria" && m.resultado === "derrota");
+
+  const lossNotes = matches.filter((m) => m.resultado === "derrota" && m.nota && m.nota.trim());
+
+  const totalLosses = matches.filter((m) => m.resultado === "derrota").length;
+  const lossesWithMulligan = matches.filter((m) => m.resultado === "derrota" && m.games && m.games.some((g) => g.mulligan > 0)).length;
+
+  const gamesWithMulligan = allGames.filter((g) => g.mulligan > 0);
+  const gamesNoMulligan = allGames.filter((g) => g.mulligan === 0);
+  const mullWinRate = (list) => {
+    const w = list.filter((g) => g.resultado === "vitoria").length;
+    return list.length ? Math.round((w / list.length) * 100) : 0;
+  };
+
+  const sorted = [...matches].sort((a, b) => a.data.localeCompare(b.data));
+  let curStreak = 0, curType = null, bestWinStreak = 0, bestLossStreak = 0;
+  sorted.forEach((m) => {
+    if (m.resultado === curType) { curStreak += 1; } else { curType = m.resultado; curStreak = 1; }
+    if (curType === "vitoria") bestWinStreak = Math.max(bestWinStreak, curStreak);
+    if (curType === "derrota") bestLossStreak = Math.max(bestLossStreak, curStreak);
+  });
+
+  const torneiosMap = {};
+  matches.filter((m) => m.tipo === "torneio").forEach((m) => {
+    const key = m.local + "|" + m.data;
+    torneiosMap[key] = { local: m.local, data: m.data, colocacao: m.colocacao };
+  });
+
+  const byDeck = {};
+  matches.forEach((m) => {
+    byDeck[m.meuDeck] = byDeck[m.meuDeck] || { total: 0, wins: 0 };
+    byDeck[m.meuDeck].total += 1;
+    if (m.resultado === "vitoria") byDeck[m.meuDeck].wins += 1;
+  });
+  const deckStats = Object.entries(byDeck).map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }));
+
+  return {
+    matches, total, wins, losses, winRate, prevWinRate, torneio, treino, play, draw,
+    matchupStats, bestMatchup, worstMatchups, mirrorMatches, mirrorWins, wonG1LostMatch,
+    lossNotes, lossesWithMulligan, totalLosses,
+    mullWinRateWith: mullWinRate(gamesWithMulligan), mullWinRateWithout: mullWinRate(gamesNoMulligan),
+    bestWinStreak, bestLossStreak, torneios: Object.values(torneiosMap), deckStats,
+  };
+}
+
+function generateMonthlyNarrative(r, monthKeyStr) {
+  if (r.total === 0) return `Nenhuma partida registrada em ${monthLabel(monthKeyStr)} ainda.`;
+  const parts = [];
+
+  let opening = `${monthLabel(monthKeyStr).charAt(0).toUpperCase() + monthLabel(monthKeyStr).slice(1)} fechou com ${r.winRate}% de vitórias (${r.wins}V/${r.losses}D em ${r.total} partida${r.total !== 1 ? "s" : ""})`;
+  if (r.prevWinRate !== null) {
+    const delta = r.winRate - r.prevWinRate;
+    if (delta > 5) opening += `, uma alta de ${delta} pontos em relação ao mês anterior. Boa evolução.`;
+    else if (delta < -5) opening += `, uma queda de ${Math.abs(delta)} pontos em relação ao mês anterior.`;
+    else opening += `, estável em relação ao mês anterior.`;
+  } else {
+    opening += ".";
+  }
+  parts.push(opening);
+
+  if (r.bestMatchup) {
+    parts.push(`O destaque do mês foi contra ${r.bestMatchup.opp} — você dominou esse matchup com ${r.bestMatchup.winRate}% de vitórias.`);
+  }
+  if (r.bestWinStreak >= 3) {
+    parts.push(`Também vale comemorar a sequência de ${r.bestWinStreak} vitórias seguidas.`);
+  }
+
+  if (r.worstMatchups.length > 0) {
+    const w = r.worstMatchups[0];
+    let attention = `O ponto que mais chama atenção é o matchup contra ${w.opp}: foram ${w.total} confronto${w.total !== 1 ? "s" : ""}, com apenas ${w.wins} vitória${w.wins !== 1 ? "s" : ""}.`;
+    const wonG1LostThisOpp = r.wonG1LostMatch.filter((m) => m.oponenteDeck === w.opp).length;
+    if (wonG1LostThisOpp > 0) {
+      attention += ` Em ${wonG1LostThisOpp} dessas derrotas, você venceu o G1 e ainda assim perdeu a partida — um sinal forte de que o plano de sideboard nesse matchup precisa de revisão.`;
+    }
+    parts.push(attention);
+  }
+  if (r.mirrorMatches.length >= 2 && r.mirrorMatches.length - r.mirrorWins > r.mirrorWins) {
+    parts.push(`O mirror match também pesou: foram ${r.mirrorMatches.length} jogados, com só ${r.mirrorWins} vitória${r.mirrorWins !== 1 ? "s" : ""}.`);
+  }
+  if (r.lossNotes.length > 0) {
+    parts.push(`Suas próprias anotações do mês reforçam alguns desses pontos — vale reler antes do próximo torneio.`);
+  }
+
+  if (r.torneio.total > 0 && r.treino.total > 0) {
+    if (r.torneio.winRate > r.treino.winRate + 5) {
+      parts.push(`Torneios foram mais fortes que os treinos esse mês (${r.torneio.winRate}% vs ${r.treino.winRate}%) — parece que a pressão competitiva está puxando o seu melhor jogo.`);
+    } else if (r.treino.winRate > r.torneio.winRate + 5) {
+      parts.push(`Os treinos renderam mais que os torneios esse mês (${r.treino.winRate}% vs ${r.torneio.winRate}%) — pode valer entender o que muda na hora de valer pontos.`);
+    }
+  }
+
+  return parts.join(" ");
+}
+
 async function loadUserData(uidStr) {
   const { db, doc, getDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
@@ -589,6 +738,7 @@ function PauperTracker({ user, team, onSignOut }) {
   const [sbForm, setSbForm] = useState(null);
   const [sbSelected, setSbSelected] = useState([]);
   const [sbError, setSbError] = useState("");
+  const [reportMonth, setReportMonth] = useState("");
 
   useEffect(() => {
     let matchesLoaded = false;
@@ -982,6 +1132,29 @@ function PauperTracker({ user, team, onSignOut }) {
     return sideboards.find((s) => s.formato === form.formato && s.deck === form.meuDeck && s.oponente === form.oponenteDeck) || null;
   }, [sideboards, form.formato, form.meuDeck, form.oponenteDeck]);
 
+  const availableMonths = useMemo(() => {
+    const keys = Array.from(new Set(data.matches.map((m) => monthKey(m.data))));
+    return keys.sort().reverse();
+  }, [data.matches]);
+  const monthlyReport = useMemo(() => {
+    if (!reportMonth) return null;
+    return computeMonthlyReport(data.matches, reportMonth);
+  }, [data.matches, reportMonth]);
+  const monthlyNarrative = useMemo(() => {
+    if (!reportMonth || !monthlyReport) return "";
+    return generateMonthlyNarrative(monthlyReport, reportMonth);
+  }, [monthlyReport, reportMonth]);
+  const favoriteDecksByFormato = useMemo(() => {
+    const grouped = {};
+    ownedDecks.forEach((key) => {
+      const [formato, name] = key.split("||");
+      grouped[formato] = grouped[formato] || [];
+      grouped[formato].push(name);
+    });
+    Object.keys(grouped).forEach((f) => grouped[f].sort((a, b) => a.localeCompare(b)));
+    return grouped;
+  }, [ownedDecks]);
+
   const showGame3 = needsGame3(form.games);
 
   return (
@@ -991,13 +1164,27 @@ function PauperTracker({ user, team, onSignOut }) {
           <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>{team.name}</div>
           <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, margin: "4px 0 0" }}>Playbook</h1>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: "#6E6656" }}>{user.displayName || user.email}</div>
-          <div style={{ fontSize: 10, color: "#8A8270", marginTop: 2 }}>Código: {team.inviteCode}</div>
-          <button onClick={onSignOut} style={{ border: "none", background: "transparent", color: "#8A3F35", fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0, marginTop: 4 }}>
-            Sair
-          </button>
-        </div>
+        <button
+          onClick={() => setScreen("perfil")}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 10,
+            padding: "8px 10px 8px 8px", cursor: "pointer",
+          }}
+        >
+          <div style={{
+            width: 30, height: 30, borderRadius: "50%", background: "#2A2621", color: "#EFE9D8",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 14, flexShrink: 0,
+          }}>
+            {(user.displayName || user.email || "?").charAt(0).toUpperCase()}
+          </div>
+          <div style={{ textAlign: "left" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#2A2621", lineHeight: 1.1 }}>{(user.displayName || user.email || "").split(" ")[0]}</div>
+            <div style={{ fontSize: 10, color: "#8A8270", lineHeight: 1.1 }}>Ver perfil</div>
+          </div>
+          <span style={{ color: "#8A8270", fontSize: 14, marginLeft: 2 }}>›</span>
+        </button>
       </div>
 
       <div className="tab-bar">
@@ -1527,6 +1714,301 @@ function PauperTracker({ user, team, onSignOut }) {
                   );
                 })}
               </div>
+            )}
+          </div>
+        )}
+
+        {!loading && screen === "perfil" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 16 }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: "50%", background: "#2A2621", color: "#EFE9D8",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 20, flexShrink: 0,
+              }}>
+                {(user.displayName || user.email || "?").charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16 }}>{user.displayName || "Jogador"}</div>
+                <div style={{ fontSize: 12, color: "#6E6656" }}>{user.email}</div>
+              </div>
+            </div>
+
+            <SectionLabel>Meu time</SectionLabel>
+            <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16 }}>{team.name}</div>
+                <div style={{ fontSize: 11, color: "#8A8270", marginTop: 2 }}>Código de convite</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 18 }}>{team.inviteCode}</span>
+                <button
+                  onClick={() => { navigator.clipboard && navigator.clipboard.writeText(team.inviteCode); }}
+                  style={{ border: "1px solid #C9C0A6", background: "transparent", borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 700, color: "#2A2621", cursor: "pointer" }}
+                >
+                  Copiar
+                </button>
+              </div>
+            </div>
+
+            <SectionLabel>Meus decks favoritos</SectionLabel>
+            <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
+              {Object.keys(favoriteDecksByFormato).length === 0 ? (
+                <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhum deck marcado ainda. Vai na aba "Decks" e clica num deck pra marcar.</div>
+              ) : (
+                Object.entries(favoriteDecksByFormato).map(([formato, decks]) => (
+                  <div key={formato} style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#8A8270", textTransform: "uppercase", marginBottom: 4 }}>{formato}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {decks.map((d) => (
+                        <span key={d} style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontWeight: 700 }}>★ {d}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <SectionLabel>Histórico mensal</SectionLabel>
+            <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
+              {availableMonths.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhuma partida registrada ainda.</div>
+              ) : (
+                <>
+                  <select
+                    value={reportMonth || availableMonths[0]}
+                    onChange={(e) => setReportMonth(e.target.value)}
+                    style={{ ...inputStyle, marginBottom: 10 }}
+                  >
+                    {availableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
+                  </select>
+                  <button
+                    onClick={() => { setReportMonth(reportMonth || availableMonths[0]); setScreen("relatorio"); }}
+                    style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+                  >
+                    Ver relatório do mês
+                  </button>
+                </>
+              )}
+            </div>
+
+            <button onClick={onSignOut} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #8A3F35", background: "transparent", color: "#8A3F35", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+              Sair da conta
+            </button>
+          </div>
+        )}
+
+        {!loading && screen === "relatorio" && monthlyReport && (
+          <div>
+            <button onClick={() => setScreen("perfil")} style={{ background: "none", border: "none", color: "#6E6656", fontSize: 13, cursor: "pointer", padding: 0, marginBottom: 14 }}>‹ Voltar ao perfil</button>
+
+            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Relatório mensal</div>
+            <h2 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, margin: "4px 0 16px" }}>
+              {monthLabel(reportMonth).replace(/^./, (c) => c.toUpperCase())}
+            </h2>
+
+            {monthlyReport.total === 0 ? (
+              <div style={{ color: "#6E6656", fontSize: 14, textAlign: "center", padding: "30px 0" }}>Nenhuma partida registrada nesse mês.</div>
+            ) : (
+              <>
+                <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px" }}>
+                  <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>Win rate geral</div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
+                    <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 44 }}>{monthlyReport.winRate}%</span>
+                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{monthlyReport.wins}V / {monthlyReport.losses}D em {monthlyReport.total} partidas</span>
+                  </div>
+                  {monthlyReport.prevWinRate !== null && (
+                    <div style={{ fontSize: 12, marginTop: 6, color: monthlyReport.winRate - monthlyReport.prevWinRate >= 0 ? "#8FBF8F" : "#E0A296" }}>
+                      {monthlyReport.winRate - monthlyReport.prevWinRate >= 0 ? "↑" : "↓"} {Math.abs(monthlyReport.winRate - monthlyReport.prevWinRate)}% em relação ao mês anterior
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginTop: 16, fontSize: 13, lineHeight: 1.5 }}>
+                  {monthlyNarrative}
+                </div>
+
+                <div style={{ marginTop: 20, marginBottom: 4, background: "#8A3F35", color: "#EFE9D8", borderRadius: 8, padding: "10px 14px" }}>
+                  <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16 }}>📚 Pra Estudar</div>
+                  <div style={{ fontSize: 12, marginTop: 2, opacity: 0.9 }}>O que vale a pena revisar esse mês</div>
+                </div>
+
+                {monthlyReport.worstMatchups.length > 0 && (
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#8A3F35", textTransform: "uppercase", marginBottom: 6 }}>Piores matchups</div>
+                    {monthlyReport.worstMatchups.map((m, i) => (
+                      <div key={i} style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 8, padding: "12px 14px", fontSize: 13, marginBottom: 8 }}>
+                        <strong>vs {m.opp}</strong>: {m.winRate}% de vitórias ({m.wins}V/{m.losses}D em {m.total})
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {monthlyReport.mirrorMatches.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#8A3F35", textTransform: "uppercase", marginBottom: 6 }}>Mirror matches</div>
+                    <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 8, padding: "12px 14px", fontSize: 13 }}>
+                      {monthlyReport.mirrorMatches.length} mirror{monthlyReport.mirrorMatches.length !== 1 ? "s" : ""} jogado{monthlyReport.mirrorMatches.length !== 1 ? "s" : ""} — {monthlyReport.mirrorWins}V / {monthlyReport.mirrorMatches.length - monthlyReport.mirrorWins}D
+                    </div>
+                  </div>
+                )}
+
+                {monthlyReport.wonG1LostMatch.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#8A3F35", textTransform: "uppercase", marginBottom: 6 }}>Ganhou o G1 e perdeu a partida</div>
+                    <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 8, padding: "12px 14px", fontSize: 13 }}>
+                      Aconteceu {monthlyReport.wonG1LostMatch.length}x esse mês — geralmente aponta ajuste de sideboard ou de plano pro G2/G3.
+                      {monthlyReport.wonG1LostMatch.map((m) => (
+                        <div key={m.id} style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>• vs {m.oponenteDeck} ({m.data})</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {monthlyReport.lossNotes.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#8A3F35", textTransform: "uppercase", marginBottom: 6 }}>Suas anotações nas derrotas</div>
+                    {monthlyReport.lossNotes.map((m) => (
+                      <div key={m.id} style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 8, padding: "12px 14px", fontSize: 13, marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, color: "#6E1F16", marginBottom: 2 }}>vs {m.oponenteDeck} · {m.data}</div>
+                        "{m.nota}"
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {monthlyReport.totalLosses > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#8A3F35", textTransform: "uppercase", marginBottom: 6 }}>Derrotas com mulligan</div>
+                    <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 8, padding: "12px 14px", fontSize: 13 }}>
+                      {monthlyReport.lossesWithMulligan} das suas {monthlyReport.totalLosses} derrotas ({Math.round((monthlyReport.lossesWithMulligan / monthlyReport.totalLosses) * 100)}%) vieram depois de comprar mulligan.
+                    </div>
+                  </div>
+                )}
+
+                {(monthlyReport.torneio.total > 0 || monthlyReport.treino.total > 0) && (
+                  <>
+                    <SectionLabel>Treino vs Torneio</SectionLabel>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Treino</div>
+                        <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.treino.winRate}%</div>
+                        <div style={{ fontSize: 11, color: "#8A8270" }}>{monthlyReport.treino.wins}/{monthlyReport.treino.total}</div>
+                      </div>
+                      <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Torneio</div>
+                        <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.torneio.winRate}%</div>
+                        <div style={{ fontSize: 11, color: "#8A8270" }}>{monthlyReport.torneio.wins}/{monthlyReport.torneio.total}</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {(monthlyReport.play.total > 0 || monthlyReport.draw.total > 0) && (
+                  <>
+                    <SectionLabel>Play vs Draw</SectionLabel>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Jogando 1º</div>
+                        <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.play.winRate}%</div>
+                        <div style={{ fontSize: 11, color: "#8A8270" }}>{monthlyReport.play.wins}/{monthlyReport.play.total}</div>
+                      </div>
+                      <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Jogando 2º</div>
+                        <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.draw.winRate}%</div>
+                        <div style={{ fontSize: 11, color: "#8A8270" }}>{monthlyReport.draw.wins}/{monthlyReport.draw.total}</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {monthlyReport.bestMatchup && (
+                  <>
+                    <SectionLabel>Destaque positivo</SectionLabel>
+                    <div style={{ background: "#E4EDE3", borderLeft: "4px solid #4B6B4E", borderRadius: 6, padding: "10px 12px", fontSize: 13 }}>
+                      Melhor matchup: contra {monthlyReport.bestMatchup.opp}, {monthlyReport.bestMatchup.winRate}% de vitórias ({monthlyReport.bestMatchup.wins}/{monthlyReport.bestMatchup.total})
+                    </div>
+                  </>
+                )}
+
+                <SectionLabel>Win rate por matchup</SectionLabel>
+                <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                  <BarChartCustom data={monthlyReport.matchupStats.map((m) => ({ name: m.opp, winRate: m.winRate, total: m.total }))} />
+                </div>
+
+                <SectionLabel>Distribuição das partidas</SectionLabel>
+                <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                  <PieChartCustom data={(() => {
+                    const total = monthlyReport.matchupStats.reduce((s, d) => s + d.total, 0);
+                    return monthlyReport.matchupStats.map((m) => ({ name: m.opp, winRate: m.winRate, total: m.total, percent: total ? Math.round((m.total / total) * 100) : 0 }));
+                  })()} />
+                </div>
+
+                <SectionLabel>Impacto do mulligan (geral)</SectionLabel>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Com mulligan</div>
+                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.mullWinRateWith}%</div>
+                  </div>
+                  <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Sem mulligan</div>
+                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.mullWinRateWithout}%</div>
+                  </div>
+                </div>
+
+                <SectionLabel>Sequência do mês</SectionLabel>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Maior sequência de vitórias</div>
+                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4, color: "#4B6B4E" }}>{monthlyReport.bestWinStreak}</div>
+                  </div>
+                  <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Maior sequência de derrotas</div>
+                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4, color: "#8A3F35" }}>{monthlyReport.bestLossStreak}</div>
+                  </div>
+                </div>
+
+                {monthlyReport.torneios.length > 0 && (
+                  <>
+                    <SectionLabel>Extrato de torneios</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {monthlyReport.torneios.map((t, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between" }}>
+                          <span>{t.local} · {t.data}</span>
+                          <strong>{t.colocacao || "—"}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {monthlyReport.deckStats.length > 1 && (
+                  <>
+                    <SectionLabel>Desempenho por deck</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {monthlyReport.deckStats.map((d, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between" }}>
+                          <span>{d.deck}</span>
+                          <strong>{d.winRate}% ({d.wins}/{d.total})</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <SectionLabel>Todas as partidas do mês</SectionLabel>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[...monthlyReport.matches].reverse().map((m) => (
+                    <div key={m.id} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px", borderLeft: `4px solid ${m.resultado === "vitoria" ? "#4B6B4E" : "#8A3F35"}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 14 }}>{m.meuDeck} vs {m.oponenteDeck}</span>
+                        <span style={{ fontSize: 11, color: "#8A8270" }}>{m.data}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "#6E6656", marginTop: 2 }}>{m.tipo === "torneio" ? `${m.local}${m.rodada ? ` · R${m.rodada}` : ""}` : m.local || "Treino"}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         )}
