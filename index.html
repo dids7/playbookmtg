@@ -1172,7 +1172,7 @@ function PauperTracker({ user, team, onSignOut }) {
                     <div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>Tirar</div>
                     {sbForm.tirar.map((c, i) => (
                       <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                        <input type="number" min="1" value={c.qtd} onChange={(e) => updateSbCard("tirar", i, "qtd", parseInt(e.target.value) || 1)} style={{ ...inputStyle, width: 54 }} />
+                        <QtyPicker value={c.qtd} onChange={(n) => updateSbCard("tirar", i, "qtd", n)} />
                         <input value={c.carta} onChange={(e) => updateSbCard("tirar", i, "carta", e.target.value)} placeholder="Nome da carta" style={{ ...inputStyle, flex: 1 }} />
                         <button onClick={() => removeSbCardRow("tirar", i)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "0 10px", cursor: "pointer" }}>×</button>
                       </div>
@@ -1183,7 +1183,7 @@ function PauperTracker({ user, team, onSignOut }) {
                     <div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>Colocar</div>
                     {sbForm.colocar.map((c, i) => (
                       <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                        <input type="number" min="1" value={c.qtd} onChange={(e) => updateSbCard("colocar", i, "qtd", parseInt(e.target.value) || 1)} style={{ ...inputStyle, width: 54 }} />
+                        <QtyPicker value={c.qtd} onChange={(n) => updateSbCard("colocar", i, "qtd", n)} />
                         <input value={c.carta} onChange={(e) => updateSbCard("colocar", i, "carta", e.target.value)} placeholder="Nome da carta" style={{ ...inputStyle, flex: 1 }} />
                         <button onClick={() => removeSbCardRow("colocar", i)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "0 10px", cursor: "pointer" }}>×</button>
                       </div>
@@ -1534,6 +1534,75 @@ function PauperTracker({ user, team, onSignOut }) {
 }
 
 // ---------- Small components ----------
+function QtyPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState(null);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
+
+  function openPicker() {
+    const rect = btnRef.current.getBoundingClientRect();
+    setCoords({ left: rect.left, top: rect.bottom + 6 });
+    setOpen(true);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e) {
+      if (popRef.current && !popRef.current.contains(e.target) && btnRef.current && !btnRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+    function handleScrollOrResize() { setOpen(false); }
+    document.addEventListener("mousedown", handleClickOutside);
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    window.addEventListener("resize", handleScrollOrResize);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+      window.removeEventListener("resize", handleScrollOrResize);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        type="button"
+        ref={btnRef}
+        onClick={() => (open ? setOpen(false) : openPicker())}
+        style={{ width: 48, height: 38, borderRadius: 6, border: "1px solid #C9C0A6", background: "#EFE9D8", color: "#2A2621", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+      >
+        {value}x
+      </button>
+      {open && coords && (
+        <div
+          ref={popRef}
+          style={{
+            position: "fixed", zIndex: 1000, top: coords.top, left: coords.left,
+            background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8,
+            padding: 8, display: "flex", gap: 6, boxShadow: "0 6px 18px rgba(42,38,33,0.25)",
+          }}
+        >
+          {[1, 2, 3, 4].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => { onChange(n); setOpen(false); }}
+              style={{
+                width: 32, height: 32, borderRadius: 6,
+                border: value === n ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                background: value === n ? "#2A2621" : "#EFE9D8",
+                color: value === n ? "#EFE9D8" : "#2A2621",
+                fontWeight: 700, fontSize: 13, cursor: "pointer",
+              }}
+            >{n}</button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function DatePicker({ value, onChange }) {
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState(null);
