@@ -270,7 +270,7 @@ function computeMatchStats(matches) {
     if (m.resultado === "vitoria") byOpp[m.oponenteDeck].wins += 1;
   });
   const chartData = Object.entries(byOpp)
-    .map(([opp, v]) => ({ name: opp, total: v.total, winRate: Math.round((v.wins / v.total) * 100) }))
+    .map(([opp, v]) => ({ name: opp, total: v.total, wins: v.wins, losses: v.total - v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
     .sort((a, b) => b.total - a.total);
   return { total, wins, losses, winRate, chartData };
 }
@@ -1695,6 +1695,8 @@ function PauperTracker({ user, team, onSignOut }) {
                 {teamPlayers.map((p) => {
                   const s = computeMatchStats(p.matches.filter((m) => m.tipo === "torneio"));
                   const isSelected = selectedPlayerUid === p.uid;
+                  const bestOpp = [...s.chartData].filter((c) => c.total >= 2).sort((a, b) => b.winRate - a.winRate)[0];
+                  const worstOpp = [...s.chartData].filter((c) => c.total >= 2).sort((a, b) => a.winRate - b.winRate)[0];
                   return (
                     <div key={p.uid} style={{ background: "#F6F1E1", borderRadius: 8, padding: "12px 14px" }}>
                       <div
@@ -1702,14 +1704,30 @@ function PauperTracker({ user, team, onSignOut }) {
                         style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
                       >
                         <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{p.displayName}</span>
-                        <span style={{ fontWeight: 700, color: barColor(s.winRate) }}>{s.winRate}% ({s.total})</span>
+                        <span style={{ fontWeight: 700, color: barColor(s.winRate) }}>{s.winRate}% <span style={{ fontWeight: 500, fontSize: 12 }}>({s.wins}V/{s.losses}D)</span></span>
                       </div>
                       {isSelected && (
                         <div style={{ marginTop: 12 }}>
                           {s.chartData.length === 0 ? (
                             <div style={{ fontSize: 13, color: "#6E6656" }}>Sem partidas registradas ainda.</div>
                           ) : (
-                            <BarChartCustom data={s.chartData} />
+                            <>
+                              {(bestOpp || worstOpp) && (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                                  {worstOpp && (
+                                    <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
+                                      Está com dificuldade contra <strong>{worstOpp.name}</strong> ({worstOpp.winRate}%, {worstOpp.wins}V/{worstOpp.losses}D) — se você manja desse matchup, chama pra treinar!
+                                    </div>
+                                  )}
+                                  {bestOpp && bestOpp.name !== worstOpp?.name && (
+                                    <div style={{ background: "#E4EDE3", borderLeft: "4px solid #4B6B4E", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
+                                      Manda bem contra <strong>{bestOpp.name}</strong> ({bestOpp.winRate}%, {bestOpp.wins}V/{bestOpp.losses}D)
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              <BarChartCustom data={s.chartData} />
+                            </>
                           )}
                         </div>
                       )}
