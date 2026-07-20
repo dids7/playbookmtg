@@ -1,0 +1,15 @@
+{
+  "name": "Playbook",
+  "short_name": "Playbook",
+  "description": "Registro de partidas e estatísticas de Magic: The Gathering para o seu time",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EFE9D8",
+  "theme_color": "#2A2621",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon-192-v3.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512-v3.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
