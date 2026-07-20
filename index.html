@@ -155,7 +155,7 @@ const DEFAULT_PAUPER_DECKS = [
   "Familiars", "Ruby Storm", "Mono-Blue Faeries", "Dimir Terror", "Selesnya Gates",
   "Gruul Ponza", "Turbo Fog", "Bogles", "Food Gardens", "Black Sacrifice",
   "Inside Out Combo", "Gruul Ramp", "Glintblade", "Azorius Gates", "Walls Combo",
-  "Izzet Terror", "Ephemerate Tron", "Boros Bully", "Cycle Storm",
+  "Izzet Terror", "Ephemerate Tron", "Boros Bully", "Cycle Storm", "Mono W Heroic",
 ];
 
 function generateInviteCode() {
@@ -1108,13 +1108,8 @@ function PauperTracker({ user, team, onSignOut }) {
 
   const sortedDeckList = useMemo(() => {
     const list = data.decks.filter((d) => d.formato === deckFormatoFilter);
-    return [...list].sort((a, b) => {
-      const aOwned = ownedDecks.includes(deckKey(a.formato, a.name)) ? 0 : 1;
-      const bOwned = ownedDecks.includes(deckKey(b.formato, b.name)) ? 0 : 1;
-      if (aOwned !== bOwned) return aOwned - bOwned;
-      return a.name.localeCompare(b.name);
-    });
-  }, [data.decks, deckFormatoFilter, ownedDecks]);
+    return [...list].sort((a, b) => a.name.localeCompare(b.name));
+  }, [data.decks, deckFormatoFilter]);
 
   const sbMyDeckOptions = useMemo(() => {
     return data.decks
