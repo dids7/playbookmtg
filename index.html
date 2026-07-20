@@ -51,6 +51,8 @@
   .gr-vd { width: 40px; height: 36px; border-radius: 6px; font-weight: 700; font-size: 15px; cursor: pointer; padding: 0; }
   .gr-num { width: 30px; height: 30px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; padding: 0; }
   .gr-pd { height: 30px; padding: 0 12px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .gr-mull-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+  .gr-mull-label { font-size: 10px; color: #8A8270; text-transform: uppercase; letter-spacing: 0.5px; }
 
   @media (max-width: 400px) {
     .gr-row { gap: 4px; }
@@ -59,6 +61,7 @@
     .gr-vd { width: 30px; height: 30px; font-size: 12px; }
     .gr-num { width: 24px; height: 24px; font-size: 10px; }
     .gr-pd { height: 24px; padding: 0 7px; font-size: 10px; }
+    .gr-mull-label { font-size: 8px; }
   }
 </style>
 </head>
@@ -2243,20 +2246,23 @@ function GameRow({ label, game, onChange }) {
           >D</button>
         </div>
         <div className="gr-divider" />
-        <div className="gr-group">
-          {[0, 1, 2, 3].map((n) => (
-            <button
-              key={n}
-              className="gr-num"
-              title="Mulligan"
-              onClick={() => onChange({ mulligan: n })}
-              style={{
-                border: game.mulligan === n ? "2px solid #2A2621" : "1px solid #C9C0A6",
-                background: game.mulligan === n ? "#2A2621" : "#EFE9D8",
-                color: game.mulligan === n ? "#EFE9D8" : "#2A2621",
-              }}
-            >{n === 3 ? "3+" : n}</button>
-          ))}
+        <div className="gr-mull-wrap">
+          <span className="gr-mull-label">Mulligan</span>
+          <div className="gr-group">
+            {[0, 1, 2, 3].map((n) => (
+              <button
+                key={n}
+                className="gr-num"
+                title="Mulligan"
+                onClick={() => onChange({ mulligan: n })}
+                style={{
+                  border: game.mulligan === n ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                  background: game.mulligan === n ? "#2A2621" : "#EFE9D8",
+                  color: game.mulligan === n ? "#EFE9D8" : "#2A2621",
+                }}
+              >{n === 3 ? "3+" : n}</button>
+            ))}
+          </div>
         </div>
         <div className="gr-divider" />
         <div className="gr-group">
