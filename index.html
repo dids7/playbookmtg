@@ -832,6 +832,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [deckFormatoFilter, setDeckFormatoFilter] = useState("");
   const [deckError, setDeckError] = useState("");
   const [ownedDecks, setOwnedDecks] = useState([]);
+  const ownedDecksRef = useRef([]);
+  useEffect(() => { ownedDecksRef.current = ownedDecks; }, [ownedDecks]);
   const [editingId, setEditingId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [chartType, setChartType] = useState("bar");
@@ -1210,10 +1212,20 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const teamStats = useMemo(() => computeMatchStats(teamFilteredMatches), [teamFilteredMatches]);
   const contributingCount = teamPlayers.length + (visible ? 1 : 0);
 
-  const sortedDeckList = useMemo(() => {
+  const [stableDeckOrder, setStableDeckOrder] = useState([]);
+  useEffect(() => {
     const list = data.decks.filter((d) => d.formato === deckFormatoFilter);
-    return [...list].sort((a, b) => a.name.localeCompare(b.name));
-  }, [data.decks, deckFormatoFilter]);
+    const sorted = [...list].sort((a, b) => {
+      const aOwned = ownedDecksRef.current.includes(deckKey(a.formato, a.name)) ? 0 : 1;
+      const bOwned = ownedDecksRef.current.includes(deckKey(b.formato, b.name)) ? 0 : 1;
+      if (aOwned !== bOwned) return aOwned - bOwned;
+      return a.name.localeCompare(b.name);
+    });
+    setStableDeckOrder(sorted);
+    // Depende só do formato e do catálogo — favoritar um deck não reordena a lista na hora,
+    // só na próxima vez que essa tela for aberta/trocada, evitando o "pulo" na rolagem.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deckFormatoFilter, data.decks]);
 
   const sbMyDeckOptions = useMemo(() => {
     return data.decks
@@ -1698,17 +1710,17 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 {deckError && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 8 }}>{deckError}</div>}
 
                 <div style={{ marginTop: 16 }}>
-                  <SectionLabel>Decks de {deckFormatoFilter} ({sortedDeckList.length})</SectionLabel>
-                  {sortedDeckList.length === 0 ? (
+                  <SectionLabel>Decks de {deckFormatoFilter} ({stableDeckOrder.length})</SectionLabel>
+                  {stableDeckOrder.length === 0 ? (
                     <div style={{ color: "#6E6656", fontSize: 14, padding: "20px 0", textAlign: "center" }}>Nenhum deck cadastrado nesse formato ainda.</div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {sortedDeckList.map((d) => {
+                      {stableDeckOrder.map((d) => {
                         const owned = ownedDecks.includes(deckKey(d.formato, d.name));
                         return (
                           <div
                             key={d.name}
-                            onClick={() => toggleOwnedDeck(d.formato, d.name)}
+                            onClick={(e) => { e.currentTarget.blur(); toggleOwnedDeck(d.formato, d.name); }}
                             style={{
                               display: "flex", justifyContent: "space-between", alignItems: "center",
                               background: owned ? "#2A2621" : "#F6F1E1",
