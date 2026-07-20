@@ -962,6 +962,18 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     }
   }
 
+  function toggleOwnedDeckKeepScroll(formato, name) {
+    const scrollY = window.scrollY;
+    toggleOwnedDeck(formato, name);
+    // Restaura a posição de rolagem depois que o navegador terminar de re-renderizar
+    // a lista reordenada, evitando o "pulo" visual pro topo da página.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.scrollTo(0, scrollY);
+      });
+    });
+  }
+
   function emptySbForm() {
     return { oponente: "", tirar: [{ qtd: 1, carta: "" }], colocar: [{ qtd: 1, carta: "" }] };
   }
@@ -1212,20 +1224,15 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const teamStats = useMemo(() => computeMatchStats(teamFilteredMatches), [teamFilteredMatches]);
   const contributingCount = teamPlayers.length + (visible ? 1 : 0);
 
-  const [stableDeckOrder, setStableDeckOrder] = useState([]);
-  useEffect(() => {
+  const stableDeckOrder = useMemo(() => {
     const list = data.decks.filter((d) => d.formato === deckFormatoFilter);
-    const sorted = [...list].sort((a, b) => {
-      const aOwned = ownedDecksRef.current.includes(deckKey(a.formato, a.name)) ? 0 : 1;
-      const bOwned = ownedDecksRef.current.includes(deckKey(b.formato, b.name)) ? 0 : 1;
+    return [...list].sort((a, b) => {
+      const aOwned = ownedDecks.includes(deckKey(a.formato, a.name)) ? 0 : 1;
+      const bOwned = ownedDecks.includes(deckKey(b.formato, b.name)) ? 0 : 1;
       if (aOwned !== bOwned) return aOwned - bOwned;
       return a.name.localeCompare(b.name);
     });
-    setStableDeckOrder(sorted);
-    // Depende só do formato e do catálogo — favoritar um deck não reordena a lista na hora,
-    // só na próxima vez que essa tela for aberta/trocada, evitando o "pulo" na rolagem.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deckFormatoFilter, data.decks]);
+  }, [data.decks, deckFormatoFilter, ownedDecks]);
 
   const sbMyDeckOptions = useMemo(() => {
     return data.decks
@@ -1720,7 +1727,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                         return (
                           <div
                             key={d.name}
-                            onClick={(e) => { e.currentTarget.blur(); toggleOwnedDeck(d.formato, d.name); }}
+                            onClick={() => toggleOwnedDeckKeepScroll(d.formato, d.name)}
                             style={{
                               display: "flex", justifyContent: "space-between", alignItems: "center",
                               background: owned ? "#2A2621" : "#F6F1E1",
