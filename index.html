@@ -81,7 +81,7 @@
     getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
   const {
-    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs
+    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
   const firebaseConfig = {
@@ -98,7 +98,7 @@
     auth: getAuth(app),
     provider: new GoogleAuthProvider(),
     db: getFirestore(app),
-    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs,
+    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment,
   };
   window.__fbReady = true;
   window.dispatchEvent(new Event("firebase-ready"));
@@ -165,24 +165,32 @@ function generateInviteCode() {
   return code;
 }
 
+const TEAM_MAX_MEMBERS = 10;
+
 async function createTeam(uidStr, teamName) {
   const { db, doc, collection, setDoc, getDoc } = window.__fb;
   const inviteCode = generateInviteCode();
   const teamRef = doc(collection(db, "teams"));
-  await setDoc(teamRef, { name: teamName, inviteCode, ownerUid: uidStr, createdAt: Date.now() });
+  await setDoc(teamRef, { name: teamName, inviteCode, ownerUid: uidStr, createdAt: Date.now(), memberCount: 1 });
   await setDoc(doc(db, "users", uidStr), { teamId: teamRef.id }, { merge: true });
   return { teamId: teamRef.id, inviteCode };
 }
 
 async function joinTeamByCode(uidStr, code) {
-  const { db, collection, query, where, getDocs, doc, setDoc } = window.__fb;
+  const { db, collection, query, where, getDocs, doc, setDoc, updateDoc, increment } = window.__fb;
   const normalized = code.trim().toUpperCase();
   const q = query(collection(db, "teams"), where("inviteCode", "==", normalized));
   const snap = await getDocs(q);
   if (snap.empty) throw new Error("Código não encontrado. Confere se digitou certo.");
   const teamDoc = snap.docs[0];
+  const teamData = teamDoc.data();
+  const currentCount = typeof teamData.memberCount === "number" ? teamData.memberCount : 0;
+  if (currentCount >= TEAM_MAX_MEMBERS) {
+    throw new Error(`Esse time já está com todas as ${TEAM_MAX_MEMBERS} vagas preenchidas.`);
+  }
   await setDoc(doc(db, "users", uidStr), { teamId: teamDoc.id }, { merge: true });
-  return { teamId: teamDoc.id, teamName: teamDoc.data().name, inviteCode: teamDoc.data().inviteCode };
+  await updateDoc(doc(db, "teams", teamDoc.id), { memberCount: increment(1) });
+  return { teamId: teamDoc.id, teamName: teamData.name, inviteCode: teamData.inviteCode };
 }
 
 async function loadUserTeam(uidStr) {
