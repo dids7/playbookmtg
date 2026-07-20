@@ -158,6 +158,17 @@ const DEFAULT_PAUPER_DECKS = [
   "Izzet Terror", "Ephemerate Tron", "Boros Bully", "Cycle Storm", "Mono W Heroic",
 ];
 
+const DEFAULT_DUEL500_DECKS = [
+  "Aang, Swift Savior", "Acererak the Archlich", "Amalia Benavides Aguirre", "Aragorn, King of Gondor",
+  "Arwen, Mortal Queen", "Balmor, Battlemage Captain", "Cloud, Midgar Mercenary", "Deadpool, Trading Card",
+  "Elminster", "Ghyrson Starn, Kelermorph", "Grist, the Hunger Tide", "Hei Bai, Forest Guardian",
+  "Hidetsugu and Kairi", "Kellan, Planar Trailblazer", "Ketramose, the New Dawn", "Krang, Master Mind",
+  "Light-Paws, Emperor's Voice", "Phelia, Exuberant Shepherd", "Phlage, Titan of Fire's Fury",
+  "Plagon, Lord of the Beach", "Quintorius, History Chaser", "Raph & Mikey, Troublemakers",
+  "Scarlet Spider, Ben Reilly", "Spider-Man 2099", "Tasigur, the Golden Fang", "Tifa Lockhart",
+  "Toph, Greatest Earthbender", "Yoshimaru, Ever Faithful", "Zurgo Bellstriker",
+];
+
 function generateInviteCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sem caracteres ambíguos (0/O, 1/I)
   let code = "";
@@ -225,16 +236,27 @@ async function setActiveTeam(uidStr, teamId) {
   await setDoc(doc(db, "users", uidStr), { activeTeamId: teamId }, { merge: true });
 }
 
-async function seedPauperDecksIfNeeded(teamId, decks) {
-  const hasPauperDecks = decks.some((d) => d.formato === "Pauper");
-  if (hasPauperDecks) return;
+const DEFAULT_DECKS_BY_FORMATO = {
+  "Pauper": DEFAULT_PAUPER_DECKS,
+  "Duel Commander 500": DEFAULT_DUEL500_DECKS,
+};
+
+async function seedDefaultDecksIfNeeded(teamId, decks) {
   const { db, doc, setDoc } = window.__fb;
+  let newDecks = decks;
+  let changed = false;
+  for (const [formato, list] of Object.entries(DEFAULT_DECKS_BY_FORMATO)) {
+    const hasAny = newDecks.some((d) => d.formato === formato);
+    if (hasAny) continue;
+    newDecks = [...newDecks, ...list.map((name) => ({ name, formato }))];
+    changed = true;
+  }
+  if (!changed) return;
   const ref = doc(db, "teams", teamId, "data", "catalog");
-  const newDecks = [...decks, ...DEFAULT_PAUPER_DECKS.map((name) => ({ name, formato: "Pauper" }))];
   try {
     await setDoc(ref, { decks: newDecks });
   } catch (e) {
-    console.error("Erro ao popular decks padrão do Pauper:", e);
+    console.error("Erro ao popular decks padrão:", e);
   }
 }
 
@@ -879,7 +901,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
   useEffect(() => {
     if (loading) return;
-    seedPauperDecksIfNeeded(team.teamId, data.decks);
+    seedDefaultDecksIfNeeded(team.teamId, data.decks);
   }, [loading, data.decks]);
 
   async function persistDecks(nextDecks) {
