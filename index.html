@@ -81,7 +81,7 @@
     getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
   const {
-    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment
+    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
   const firebaseConfig = {
@@ -98,7 +98,7 @@
     auth: getAuth(app),
     provider: new GoogleAuthProvider(),
     db: getFirestore(app),
-    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment,
+    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion,
   };
   window.__fbReady = true;
   window.dispatchEvent(new Event("firebase-ready"));
@@ -168,16 +168,16 @@ function generateInviteCode() {
 const TEAM_MAX_MEMBERS = 10;
 
 async function createTeam(uidStr, teamName) {
-  const { db, doc, collection, setDoc, getDoc } = window.__fb;
+  const { db, doc, collection, setDoc, arrayUnion } = window.__fb;
   const inviteCode = generateInviteCode();
   const teamRef = doc(collection(db, "teams"));
   await setDoc(teamRef, { name: teamName, inviteCode, ownerUid: uidStr, createdAt: Date.now(), memberCount: 1 });
-  await setDoc(doc(db, "users", uidStr), { teamId: teamRef.id }, { merge: true });
+  await setDoc(doc(db, "users", uidStr), { teamIds: arrayUnion(teamRef.id), activeTeamId: teamRef.id }, { merge: true });
   return { teamId: teamRef.id, inviteCode };
 }
 
 async function joinTeamByCode(uidStr, code) {
-  const { db, collection, query, where, getDocs, doc, setDoc, updateDoc, increment } = window.__fb;
+  const { db, collection, query, where, getDocs, doc, setDoc, updateDoc, increment, arrayUnion } = window.__fb;
   const normalized = code.trim().toUpperCase();
   const q = query(collection(db, "teams"), where("inviteCode", "==", normalized));
   const snap = await getDocs(q);
@@ -188,19 +188,41 @@ async function joinTeamByCode(uidStr, code) {
   if (currentCount >= TEAM_MAX_MEMBERS) {
     throw new Error(`Esse time já está com todas as ${TEAM_MAX_MEMBERS} vagas preenchidas.`);
   }
-  await setDoc(doc(db, "users", uidStr), { teamId: teamDoc.id }, { merge: true });
+  await setDoc(doc(db, "users", uidStr), { teamIds: arrayUnion(teamDoc.id), activeTeamId: teamDoc.id }, { merge: true });
   await updateDoc(doc(db, "teams", teamDoc.id), { memberCount: increment(1) });
   return { teamId: teamDoc.id, teamName: teamData.name, inviteCode: teamData.inviteCode };
 }
 
-async function loadUserTeam(uidStr) {
-  const { db, doc, getDoc } = window.__fb;
-  const userSnap = await getDoc(doc(db, "users", uidStr));
-  const teamId = userSnap.exists() ? userSnap.data().teamId : null;
-  if (!teamId) return null;
-  const teamSnap = await getDoc(doc(db, "teams", teamId));
-  if (!teamSnap.exists()) return null;
-  return { teamId, name: teamSnap.data().name, inviteCode: teamSnap.data().inviteCode };
+// Carrega todos os times do usuário, migrando contas antigas (campo teamId único) automaticamente
+async function loadUserTeamsInfo(uidStr) {
+  const { db, doc, getDoc, setDoc } = window.__fb;
+  const userRef = doc(db, "users", uidStr);
+  const userSnap = await getDoc(userRef);
+  if (!userSnap.exists()) return { teams: [], activeTeamId: null };
+
+  const d = userSnap.data();
+  let teamIds = d.teamIds;
+  let activeTeamId = d.activeTeamId;
+
+  if (!teamIds && d.teamId) {
+    teamIds = [d.teamId];
+    activeTeamId = d.teamId;
+    await setDoc(userRef, { teamIds, activeTeamId }, { merge: true });
+  }
+  teamIds = teamIds || [];
+
+  const teams = [];
+  for (const tid of teamIds) {
+    const tSnap = await getDoc(doc(db, "teams", tid));
+    if (tSnap.exists()) teams.push({ teamId: tid, name: tSnap.data().name, inviteCode: tSnap.data().inviteCode });
+  }
+  if (!activeTeamId && teams.length > 0) activeTeamId = teams[0].teamId;
+  return { teams, activeTeamId };
+}
+
+async function setActiveTeam(uidStr, teamId) {
+  const { db, doc, setDoc } = window.__fb;
+  await setDoc(doc(db, "users", uidStr), { activeTeamId: teamId }, { merge: true });
 }
 
 async function seedPauperDecksIfNeeded(teamId, decks) {
@@ -561,7 +583,9 @@ function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState("");
   const [team, setTeam] = useState(null);
+  const [userTeams, setUserTeams] = useState([]);
   const [teamLoading, setTeamLoading] = useState(true);
+  const [forceTeamGate, setForceTeamGate] = useState(false);
   const installPrompt = useInstallPrompt();
 
   useEffect(() => {
@@ -577,11 +601,27 @@ function App() {
   useEffect(() => {
     if (!user) { setTeamLoading(false); return; }
     setTeamLoading(true);
-    loadUserTeam(user.uid)
-      .then((t) => setTeam(t))
-      .catch(() => setTeam(null))
+    loadUserTeamsInfo(user.uid)
+      .then(({ teams, activeTeamId }) => {
+        setUserTeams(teams);
+        const active = teams.find((t) => t.teamId === activeTeamId) || teams[0] || null;
+        setTeam(active);
+      })
+      .catch(() => { setUserTeams([]); setTeam(null); })
       .finally(() => setTeamLoading(false));
   }, [user]);
+
+  function handleTeamReady(t) {
+    setUserTeams((prev) => (prev.some((x) => x.teamId === t.teamId) ? prev : [...prev, t]));
+    setTeam(t);
+    setForceTeamGate(false);
+  }
+
+  async function handleSwitchTeam(t) {
+    setTeam(t);
+    setForceTeamGate(false);
+    try { await setActiveTeam(user.uid, t.teamId); } catch (e) {}
+  }
 
   async function handleSignIn() {
     setAuthError("");
@@ -615,23 +655,37 @@ function App() {
   if (teamLoading) {
     return <div style={{ padding: 24, color: "#6E6656" }}>Carregando…</div>;
   }
-  if (!team) {
+  if (!team || forceTeamGate) {
     return (
       <>
         {banner}
-        <TeamGate user={user} onSignOut={handleSignOut} onTeamReady={setTeam} />
+        <TeamGate
+          user={user}
+          onSignOut={handleSignOut}
+          onTeamReady={handleTeamReady}
+          existingTeams={userTeams}
+          onSelectExisting={handleSwitchTeam}
+          onCancel={team ? () => setForceTeamGate(false) : null}
+        />
       </>
     );
   }
   return (
     <>
       {banner}
-      <PauperTracker user={user} team={team} onSignOut={handleSignOut} />
+      <PauperTracker
+        user={user}
+        team={team}
+        userTeams={userTeams}
+        onSignOut={handleSignOut}
+        onSwitchTeam={handleSwitchTeam}
+        onRequestTeamGate={() => setForceTeamGate(true)}
+      />
     </>
   );
 }
 
-function TeamGate({ user, onSignOut, onTeamReady }) {
+function TeamGate({ user, onSignOut, onTeamReady, existingTeams, onSelectExisting, onCancel }) {
   const [mode, setMode] = useState("choose"); // choose | create | join
   const [teamName, setTeamName] = useState("");
   const [code, setCode] = useState("");
@@ -670,16 +724,36 @@ function TeamGate({ user, onSignOut, onTeamReady }) {
   return (
     <div className="app-shell" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", minHeight: "100vh" }}>
       <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Playbook</div>
-      <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 24, margin: "6px 0 24px" }}>Qual é o seu time?</h1>
+      <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 24, margin: "6px 0 24px" }}>
+        {existingTeams && existingTeams.length > 0 ? "Trocar de time" : "Qual é o seu time?"}
+      </h1>
 
       {mode === "choose" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", maxWidth: 300 }}>
+          {existingTeams && existingTeams.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 6 }}>
+              {existingTeams.map((t) => (
+                <button
+                  key={t.teamId}
+                  onClick={() => onSelectExisting(t)}
+                  style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #C9C0A6", background: "#F6F1E1", color: "#2A2621", fontWeight: 700, fontSize: 14, cursor: "pointer", textAlign: "left" }}
+                >
+                  {t.name}
+                </button>
+              ))}
+            </div>
+          )}
           <button onClick={() => setMode("create")} style={{ padding: "14px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
             Criar um time novo
           </button>
           <button onClick={() => setMode("join")} style={{ padding: "14px", borderRadius: 8, border: "1px solid #C9C0A6", background: "#F6F1E1", color: "#2A2621", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
             Entrar com código de convite
           </button>
+          {onCancel && (
+            <button onClick={onCancel} style={{ background: "transparent", border: "none", color: "#6E6656", fontSize: 13, cursor: "pointer", marginTop: 4 }}>
+              Cancelar
+            </button>
+          )}
         </div>
       )}
 
@@ -721,7 +795,7 @@ function TeamGate({ user, onSignOut, onTeamReady }) {
 }
 
 // ---------- Main app ----------
-function PauperTracker({ user, team, onSignOut }) {
+function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onRequestTeamGate }) {
   const [screen, setScreen] = useState("registrar");
   const [data, setData] = useState({ decks: [], matches: [] });
   const [loading, setLoading] = useState(true);
@@ -1759,7 +1833,7 @@ function PauperTracker({ user, team, onSignOut }) {
             </div>
 
             <SectionLabel>Meu time</SectionLabel>
-            <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16 }}>{team.name}</div>
                 <div style={{ fontSize: 11, color: "#8A8270", marginTop: 2 }}>Código de convite</div>
@@ -1774,6 +1848,12 @@ function PauperTracker({ user, team, onSignOut }) {
                 </button>
               </div>
             </div>
+            <button
+              onClick={onRequestTeamGate}
+              style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px dashed #C9C0A6", background: "transparent", color: "#6E6656", fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 20 }}
+            >
+              {userTeams && userTeams.length > 1 ? "Trocar de time" : "Entrar em outro time"}
+            </button>
 
             <SectionLabel>Meus decks favoritos</SectionLabel>
             <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
