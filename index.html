@@ -184,7 +184,7 @@ async function createTeam(uidStr, teamName) {
   const teamRef = doc(collection(db, "teams"));
   await setDoc(teamRef, { name: teamName, inviteCode, ownerUid: uidStr, createdAt: Date.now(), memberCount: 1 });
   await setDoc(doc(db, "users", uidStr), { teamIds: arrayUnion(teamRef.id), activeTeamId: teamRef.id }, { merge: true });
-  return { teamId: teamRef.id, inviteCode };
+  return { teamId: teamRef.id, inviteCode, ownerUid: uidStr };
 }
 
 async function joinTeamByCode(uidStr, code) {
@@ -201,7 +201,7 @@ async function joinTeamByCode(uidStr, code) {
   }
   await setDoc(doc(db, "users", uidStr), { teamIds: arrayUnion(teamDoc.id), activeTeamId: teamDoc.id }, { merge: true });
   await updateDoc(doc(db, "teams", teamDoc.id), { memberCount: increment(1) });
-  return { teamId: teamDoc.id, teamName: teamData.name, inviteCode: teamData.inviteCode };
+  return { teamId: teamDoc.id, teamName: teamData.name, inviteCode: teamData.inviteCode, ownerUid: teamData.ownerUid };
 }
 
 // Carrega todos os times do usuário, migrando contas antigas (campo teamId único) automaticamente
@@ -225,7 +225,7 @@ async function loadUserTeamsInfo(uidStr) {
   const teams = [];
   for (const tid of teamIds) {
     const tSnap = await getDoc(doc(db, "teams", tid));
-    if (tSnap.exists()) teams.push({ teamId: tid, name: tSnap.data().name, inviteCode: tSnap.data().inviteCode });
+    if (tSnap.exists()) teams.push({ teamId: tid, name: tSnap.data().name, inviteCode: tSnap.data().inviteCode, ownerUid: tSnap.data().ownerUid });
   }
   if (!activeTeamId && teams.length > 0) activeTeamId = teams[0].teamId;
   return { teams, activeTeamId };
@@ -294,6 +294,24 @@ async function loadOwnVisibility(teamId, uidStr) {
   const snap = await getDoc(ref);
   if (snap.exists()) return !!snap.data().visible;
   return false;
+}
+
+// Espelho incondicional pro painel de admin — sempre sincroniza, independente
+// do toggle de visibilidade (que só controla o que os COLEGAS veem, não o admin).
+async function syncAllMatchesForAdmin(teamId, uidStr, displayName, matches) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "teams", teamId, "allMatches", uidStr);
+  await setDoc(ref, { displayName, matches });
+}
+async function loadAllTeamMatches(teamId) {
+  const { db, collection, getDocs } = window.__fb;
+  const snap = await getDocs(collection(db, "teams", teamId, "allMatches"));
+  const list = [];
+  snap.forEach((docSnap) => {
+    const d = docSnap.data();
+    list.push({ uid: docSnap.id, displayName: d.displayName || "Jogador", matches: d.matches || [] });
+  });
+  return list;
 }
 function subscribeVisiblePlayers(teamId, myUid, callback) {
   const { db, collection, query, where, onSnapshot } = window.__fb;
@@ -848,6 +866,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [sbSelected, setSbSelected] = useState([]);
   const [sbError, setSbError] = useState("");
   const [reportMonth, setReportMonth] = useState("");
+  const [adminData, setAdminData] = useState(null);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState("");
+  const [adminMonthFilter, setAdminMonthFilter] = useState("__all__");
+  const isTeamOwner = team && team.ownerUid === user.uid;
 
   useEffect(() => {
     let matchesLoaded = false;
@@ -905,6 +928,16 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     if (loading) return;
     seedDefaultDecksIfNeeded(team.teamId, data.decks);
   }, [loading, data.decks]);
+
+  useEffect(() => {
+    if (screen !== "admin" || !isTeamOwner) return;
+    setAdminLoading(true);
+    setAdminError("");
+    loadAllTeamMatches(team.teamId)
+      .then((list) => setAdminData(list))
+      .catch((e) => setAdminError("Não consegui carregar os dados do time: " + (e && e.message ? e.message : "erro")))
+      .finally(() => setAdminLoading(false));
+  }, [screen]);
 
   async function persistDecks(nextDecks) {
     try {
@@ -1095,6 +1128,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     setData((prev) => ({ ...prev, matches: nextMatches }));
     setConfirmDeleteId(null);
     await persistMatches(nextMatches);
+    syncAllMatchesForAdmin(team.teamId, user.uid, user.displayName || user.email, nextMatches).catch(() => {});
     if (visible) {
       syncPlayerVisibility(team.teamId, user.uid, user.displayName || user.email, true, nextMatches).catch(() => {});
     }
@@ -1131,6 +1165,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
       const ok = await persistMatches(nextMatches);
       setData((prev) => ({ ...prev, matches: nextMatches }));
+      syncAllMatchesForAdmin(team.teamId, user.uid, user.displayName || user.email, nextMatches).catch(() => {});
       if (visible) {
         syncPlayerVisibility(team.teamId, user.uid, user.displayName || user.email, true, nextMatches).catch(() => {});
       }
@@ -1265,6 +1300,44 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     if (!reportMonth || !monthlyReport) return "";
     return generateMonthlyNarrative(monthlyReport, reportMonth);
   }, [monthlyReport, reportMonth]);
+  const adminAvailableMonths = useMemo(() => {
+    if (!adminData) return [];
+    const keys = new Set();
+    adminData.forEach((p) => p.matches.forEach((m) => keys.add(monthKey(m.data))));
+    return Array.from(keys).sort().reverse();
+  }, [adminData]);
+
+  const adminFilteredByPlayer = useMemo(() => {
+    if (!adminData) return [];
+    return adminData.map((p) => ({
+      uid: p.uid,
+      displayName: p.displayName,
+      matches: adminMonthFilter === "__all__" ? p.matches : p.matches.filter((m) => monthKey(m.data) === adminMonthFilter),
+    }));
+  }, [adminData, adminMonthFilter]);
+
+  const adminCombinedMatches = useMemo(() => adminFilteredByPlayer.flatMap((p) => p.matches), [adminFilteredByPlayer]);
+
+  const adminOverall = useMemo(() => computeMatchStats(adminCombinedMatches), [adminCombinedMatches]);
+
+  const adminByPlayer = useMemo(() => {
+    return adminFilteredByPlayer
+      .map((p) => ({ ...p, stats: computeMatchStats(p.matches) }))
+      .sort((a, b) => b.stats.total - a.stats.total);
+  }, [adminFilteredByPlayer]);
+
+  const adminByDeck = useMemo(() => {
+    const byDeck = {};
+    adminCombinedMatches.forEach((m) => {
+      byDeck[m.meuDeck] = byDeck[m.meuDeck] || { total: 0, wins: 0 };
+      byDeck[m.meuDeck].total += 1;
+      if (m.resultado === "vitoria") byDeck[m.meuDeck].wins += 1;
+    });
+    return Object.entries(byDeck)
+      .map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
+      .sort((a, b) => b.total - a.total);
+  }, [adminCombinedMatches]);
+
   const favoriteDecksByFormato = useMemo(() => {
     const grouped = {};
     ownedDecks.forEach((key) => {
@@ -1937,6 +2010,21 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               )}
             </div>
 
+            {isTeamOwner && (
+              <>
+                <SectionLabel>Administração do time</SectionLabel>
+                <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 12, marginBottom: 10 }}>
+                  Como dono do time, você vê as estatísticas de todos os membros, mesmo quem não ativou o compartilhamento.
+                </div>
+                <button
+                  onClick={() => setScreen("admin")}
+                  style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 20 }}
+                >
+                  Painel de administração
+                </button>
+              </>
+            )}
+
             <button onClick={onSignOut} style={{ width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #8A3F35", background: "transparent", color: "#8A3F35", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
               Sair da conta
             </button>
@@ -2153,6 +2241,78 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     </div>
                   ))}
                 </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {!loading && screen === "admin" && isTeamOwner && (
+          <div>
+            <button onClick={() => setScreen("perfil")} style={{ background: "none", border: "none", color: "#6E6656", fontSize: 13, cursor: "pointer", padding: 0, marginBottom: 14 }}>‹ Voltar ao perfil</button>
+
+            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Administração</div>
+            <h2 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, margin: "4px 0 16px" }}>Estatísticas do time</h2>
+
+            {adminLoading && <div style={{ color: "#6E6656", fontSize: 14 }}>Carregando…</div>}
+            {adminError && <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 14 }}>{adminError}</div>}
+
+            {!adminLoading && adminData && (
+              <>
+                <Field label="Período">
+                  <select value={adminMonthFilter} onChange={(e) => setAdminMonthFilter(e.target.value)} style={inputStyle}>
+                    <option value="__all__">Todo o tempo</option>
+                    {adminAvailableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
+                  </select>
+                </Field>
+
+                <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px", margin: "14px 0" }}>
+                  <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>
+                    Geral do time ({adminData.length} jogador{adminData.length !== 1 ? "es" : ""})
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
+                    <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 44 }}>{adminOverall.winRate}%</span>
+                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{adminOverall.wins}V / {adminOverall.losses}D em {adminOverall.total} partidas</span>
+                  </div>
+                </div>
+
+                <SectionLabel>Por jogador</SectionLabel>
+                {adminByPlayer.length === 0 ? (
+                  <div style={{ color: "#6E6656", fontSize: 14, padding: "16px 0", textAlign: "center" }}>Nenhuma partida registrada nesse período.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                    {adminByPlayer.map((p) => (
+                      <div key={p.uid} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{p.displayName}</span>
+                        <span style={{ fontWeight: 700, color: barColor(p.stats.winRate) }}>
+                          {p.stats.winRate}% <span style={{ fontWeight: 500, fontSize: 12, color: "#6E6656" }}>({p.stats.wins}V/{p.stats.losses}D)</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {adminByDeck.length > 0 && (
+                  <>
+                    <SectionLabel>Por deck</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                      {adminByDeck.map((d, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between" }}>
+                          <span>{d.deck}</span>
+                          <strong>{d.winRate}% ({d.wins}/{d.total})</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {adminOverall.chartData.length > 0 && (
+                  <>
+                    <SectionLabel>Win rate por matchup (time todo)</SectionLabel>
+                    <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                      <BarChartCustom data={adminOverall.chartData} />
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
