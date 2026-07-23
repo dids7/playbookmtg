@@ -887,6 +887,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [actionToast, setActionToast] = useState(null);
+  const actionToastTimerRef = useRef(null);
+  function showActionToast(message) {
+    setActionToast(message);
+    clearTimeout(actionToastTimerRef.current);
+    actionToastTimerRef.current = setTimeout(() => setActionToast(null), 2200);
+  }
   const [error, setError] = useState("");
   const [statsFormato, setStatsFormato] = useState("__all__");
   const [statsDeck, setStatsDeck] = useState("__all__");
@@ -1031,6 +1038,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     setNewDeckName("");
     setNewDeckCategoria("");
     await persistDecks(nextDecks);
+    showActionToast(`✓ ${name} adicionado!`);
   }
 
   async function cycleDeckCategoria(formato, name) {
@@ -1043,8 +1051,10 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
   async function toggleOwnedDeck(formato, name) {
     const key = deckKey(formato, name);
-    const next = ownedDecks.includes(key) ? ownedDecks.filter((k) => k !== key) : [...ownedDecks, key];
+    const willBeOwned = !ownedDecks.includes(key);
+    const next = willBeOwned ? [...ownedDecks, key] : ownedDecks.filter((k) => k !== key);
     setOwnedDecks(next);
+    showActionToast(willBeOwned ? `★ ${name} adicionado aos favoritos!` : `${name} removido dos favoritos.`);
     try {
       await saveOwnedDecks(user.uid, next);
     } catch (e) {
@@ -1185,6 +1195,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     setData((prev) => ({ ...prev, matches: nextMatches }));
     setConfirmDeleteId(null);
     await persistMatches(nextMatches);
+    showActionToast("✓ Partida excluída!");
     syncAllMatchesForAdmin(team.teamId, user.uid, user.displayName || user.email, nextMatches).catch(() => {});
     if (visible) {
       syncPlayerVisibility(team.teamId, user.uid, user.displayName || user.email, true, nextMatches).catch(() => {});
@@ -1826,6 +1837,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
         {!loading && screen === "estatisticas" && (
           <div>
+            {actionToast && (
+              <div style={{ background: "#E4EDE3", borderLeft: "4px solid #4B6B4E", borderRadius: 6, padding: "10px 12px", fontSize: 13, fontWeight: 700, color: "#2A2621", marginBottom: 14 }}>
+                {actionToast}
+              </div>
+            )}
             {data.matches.length === 0 ? (
               <div style={{ color: "#6E6656", fontSize: 14, textAlign: "center", padding: "40px 0" }}>Nenhuma partida registrada ainda.</div>
             ) : (
@@ -1960,6 +1976,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
         {!loading && screen === "decks" && (
           <div>
+            {actionToast && (
+              <div style={{ background: "#E4EDE3", borderLeft: "4px solid #4B6B4E", borderRadius: 6, padding: "10px 12px", fontSize: 13, fontWeight: 700, color: "#2A2621", marginBottom: 16 }}>
+                {actionToast}
+              </div>
+            )}
             <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 16 }}>
               Escolha um formato pra ver os decks cadastrados. Clique num deck pra marcar que você possui ele — os seus sobem pro topo da lista.
             </div>
