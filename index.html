@@ -170,6 +170,20 @@ const DEFAULT_DUEL500_DECKS = [
   "Toph, Greatest Earthbender", "Yoshimaru, Ever Faithful", "Zurgo Bellstriker",
 ];
 
+const DEFAULT_DUEL_COMMANDER_DECKS = [
+  "Aang, Swift Savior", "Amalia Benavides Aguirre", "Aminatou, the Fateshifter", "Aragorn, King of Gondor",
+  "Ashling, the Limitless", "Atraxa, Grand Unifier", "Brigid, Clachan's Heart", "Cecil, Dark Knight",
+  "Cloud, Midgar Mercenary", "Dargo, the Shipwrecker", "Ellie, Brick Master", "Emet-Selch, Unsundered",
+  "Fin Fang Foom", "Glarb, Calamity's Augur", "Jeska, Thrice Reborn", "King T'Challa",
+  "Light-Paws, Emperor's Voice", "Lumra, Bellow of the Woods", "Marath, Will of the Wild", "Mister Fantastic",
+  "Mole Man, Moloid Master", "Molecule Man", "Nakia, Wakandan Operative", "Nick Fury, Agent of S.H.I.E.L.D.",
+  "Niv-Mizzet Reborn", "Obyra, Dreaming Duelist", "Phelia, Exuberant Shepherd", "Rielle, the Everwise",
+  "Saheeli, the Gifted", "Satya, Aetherflux Genius", "Sigarda, Font of Blessings", "Slimefoot and Squee",
+  "Spider-Man 2099", "Tana, the Bloodsower", "Thanos, the Mad Titan", "The Astonishing Ant-Man",
+  "The Fantastic Four", "The Fantasticar", "The Serpent Society", "Thrasios, Triton Hero",
+  "Vohar, Vodalian Desecrator", "Zhulodok, Void Gorger",
+];
+
 function generateInviteCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sem caracteres ambíguos (0/O, 1/I)
   let code = "";
@@ -240,6 +254,7 @@ async function setActiveTeam(uidStr, teamId) {
 const DEFAULT_DECKS_BY_FORMATO = {
   "Pauper": DEFAULT_PAUPER_DECKS,
   "Duel Commander 500": DEFAULT_DUEL500_DECKS,
+  "Duel Commander": DEFAULT_DUEL_COMMANDER_DECKS,
 };
 
 async function seedDefaultDecksIfNeeded(teamId, decks) {
@@ -871,6 +886,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState("");
   const [adminMonthFilter, setAdminMonthFilter] = useState("__all__");
+  const [adminCopied, setAdminCopied] = useState(false);
   const isTeamOwner = team && team.ownerUid === user.uid;
 
   useEffect(() => {
@@ -1338,6 +1354,55 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       .map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
       .sort((a, b) => b.total - a.total);
   }, [adminCombinedMatches]);
+
+  const adminTeamBestMatchup = useMemo(() => {
+    return [...adminOverall.chartData].filter((c) => c.total >= 2).sort((a, b) => b.winRate - a.winRate)[0] || null;
+  }, [adminOverall]);
+  const adminTeamWorstMatchup = useMemo(() => {
+    return [...adminOverall.chartData].filter((c) => c.total >= 2).sort((a, b) => a.winRate - b.winRate)[0] || null;
+  }, [adminOverall]);
+
+  const adminTournamentsWithPlayer = useMemo(() => {
+    const list = [];
+    adminFilteredByPlayer.forEach((p) => {
+      const seen = {};
+      p.matches.filter((m) => m.tipo === "torneio").forEach((m) => {
+        const key = m.local + "|" + m.data;
+        if (!seen[key]) {
+          seen[key] = true;
+          list.push({ displayName: p.displayName, local: m.local, data: m.data, colocacao: m.colocacao });
+        }
+      });
+    });
+    return list.sort((a, b) => b.data.localeCompare(a.data));
+  }, [adminFilteredByPlayer]);
+
+  const adminReportText = useMemo(() => {
+    const periodo = adminMonthFilter === "__all__" ? "Todo o tempo" : monthLabel(adminMonthFilter).replace(/^./, (c) => c.toUpperCase());
+    const lines = [];
+    lines.push(`📊 RELATÓRIO DO TIME — ${periodo}`);
+    lines.push("");
+    lines.push(`Win rate geral: ${adminOverall.winRate}% (${adminOverall.wins}V/${adminOverall.losses}D em ${adminOverall.total} partidas)`);
+    if (adminTeamWorstMatchup) lines.push(`Deck que mais nos venceu: ${adminTeamWorstMatchup.name} (${adminTeamWorstMatchup.winRate}% de vitórias nossas, ${adminTeamWorstMatchup.total} jogos)`);
+    if (adminTeamBestMatchup) lines.push(`Deck que mais vencemos: ${adminTeamBestMatchup.name} (${adminTeamBestMatchup.winRate}% de vitórias, ${adminTeamBestMatchup.total} jogos)`);
+    lines.push("");
+    if (adminTournamentsWithPlayer.length > 0) {
+      lines.push("🏆 TORNEIOS DO PERÍODO");
+      adminTournamentsWithPlayer.forEach((t) => {
+        lines.push(`- ${t.local} (${t.data}): ${t.colocacao || "sem colocação registrada"} — ${t.displayName}`);
+      });
+      lines.push("");
+    }
+    lines.push("👤 INDIVIDUAL");
+    adminByPlayer.forEach((p) => {
+      lines.push(`${p.displayName}: ${p.stats.winRate}% (${p.stats.wins}V/${p.stats.losses}D)`);
+      const best = [...p.stats.chartData].sort((a, b) => b.winRate - a.winRate)[0];
+      const worst = [...p.stats.chartData].sort((a, b) => a.winRate - b.winRate)[0];
+      if (best) lines.push(`  Melhor: vs ${best.name} (${best.winRate}%)`);
+      if (worst && worst.name !== best?.name) lines.push(`  Pior: vs ${worst.name} (${worst.winRate}%)`);
+    });
+    return lines.join("\n");
+  }, [adminMonthFilter, adminOverall, adminTeamBestMatchup, adminTeamWorstMatchup, adminTournamentsWithPlayer, adminByPlayer]);
 
   const favoriteDecksByFormato = useMemo(() => {
     const grouped = {};
@@ -2314,6 +2379,43 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     </div>
                   </>
                 )}
+
+                {adminTournamentsWithPlayer.length > 0 && (
+                  <>
+                    <SectionLabel>Torneios do período</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {adminTournamentsWithPlayer.map((t, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span>{t.local} · {t.data}</span>
+                            <strong>{t.colocacao || "—"}</strong>
+                          </div>
+                          <div style={{ fontSize: 11, color: "#8A8270", marginTop: 2 }}>{t.displayName}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <SectionLabel>Relatório completo pra compartilhar</SectionLabel>
+                <textarea
+                  readOnly
+                  value={adminReportText}
+                  rows={10}
+                  style={{ ...inputStyle, fontFamily: "monospace", fontSize: 12, resize: "vertical", marginBottom: 8 }}
+                />
+                <button
+                  onClick={() => {
+                    if (navigator.clipboard) {
+                      navigator.clipboard.writeText(adminReportText);
+                      setAdminCopied(true);
+                      setTimeout(() => setAdminCopied(false), 1800);
+                    }
+                  }}
+                  style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: adminCopied ? "#4B6B4E" : "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+                >
+                  {adminCopied ? "Copiado ✓" : "Copiar relatório"}
+                </button>
               </>
             )}
           </div>
