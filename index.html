@@ -927,6 +927,47 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [adminFormatoFilter, setAdminFormatoFilter] = useState(FORMATOS[0]);
   const [adminCopied, setAdminCopied] = useState(false);
   const [imageGenerating, setImageGenerating] = useState(false);
+  const [shareGenerating, setShareGenerating] = useState(false);
+  const myStatsCaptureRef = useRef(null);
+
+  async function handleShareMyStats() {
+    if (!myStatsCaptureRef.current || !window.html2canvas) return;
+    setShareGenerating(true);
+    try {
+      const canvas = await window.html2canvas(myStatsCaptureRef.current, {
+        backgroundColor: "#EFE9D8",
+        scale: 2,
+        useCORS: true,
+      });
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      const fileName = `minhas-estatisticas-${(user.displayName || "jogador").replace(/\s+/g, "-").toLowerCase()}.png`;
+      const file = new File([blob], fileName, { type: "image/png" });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: "Minhas estatísticas",
+          text: `Minhas estatísticas no Playbook (${team.name})`,
+        });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      if (e && e.name !== "AbortError") {
+        setError("Não consegui compartilhar: " + (e && e.message ? e.message : "erro"));
+      }
+    } finally {
+      setShareGenerating(false);
+    }
+  }
+
   const reportCaptureRef = useRef(null);
 
   async function handleDownloadReportImage() {
@@ -1909,6 +1950,14 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   </div>
                 </div>
 
+                <button
+                  onClick={handleShareMyStats}
+                  disabled={shareGenerating}
+                  style={{ width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #C9C0A6", background: "#F6F1E1", color: "#2A2621", fontWeight: 700, fontSize: 14, cursor: shareGenerating ? "default" : "pointer", marginBottom: 16, opacity: shareGenerating ? 0.7 : 1 }}
+                >
+                  {shareGenerating ? "Gerando…" : "📤 Compartilhar minhas estatísticas"}
+                </button>
+
                 {(playDrawStats.play.total > 0 || playDrawStats.draw.total > 0) && (
                   <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
                     <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: "12px 14px" }}>
@@ -1995,6 +2044,49 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       </div>
                     </div>
                   ))}
+                </div>
+
+                <div style={{ position: "fixed", top: 0, left: -99999, zIndex: -1 }}>
+                  <div ref={myStatsCaptureRef} style={{ width: 600, background: "#EFE9D8", color: "#2A2621", fontFamily: "'Roboto Condensed', sans-serif", padding: 28 }}>
+                    <div style={{ borderBottom: "4px solid #2A2621", paddingBottom: 14, marginBottom: 20 }}>
+                      <div style={{ fontSize: 12, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>{team.name} · Playbook</div>
+                      <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 28 }}>{user.displayName || "Minhas estatísticas"}</div>
+                      <div style={{ fontSize: 13, color: "#6E6656", marginTop: 2 }}>
+                        {statsFormato === "__all__" ? "Todos os formatos" : statsFormato} · {statsDeck === "__all__" ? "Todos os decks" : statsDeck} · {statsTipo === "todos" ? "Torneios e treinos" : statsTipo === "torneio" ? "Torneios" : "Treinos"}
+                      </div>
+                    </div>
+
+                    <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px", marginBottom: 20 }}>
+                      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>Win rate</div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
+                        <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 48 }}>{overall.winRate}%</span>
+                        <span style={{ fontSize: 14, color: "#C9C0A6" }}>{overall.wins}V / {overall.losses}D em {overall.total} partidas</span>
+                      </div>
+                    </div>
+
+                    {(bestMatchup || worstMatchup) && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                        {bestMatchup && (
+                          <div style={{ background: "#E4EDE3", borderLeft: "5px solid #4B6B4E", borderRadius: 8, padding: "12px 14px", fontSize: 14 }}>
+                            Melhor matchup: <strong>{bestMatchup.opp}</strong> ({bestMatchup.winRate}%, {bestMatchup.wins}/{bestMatchup.total})
+                          </div>
+                        )}
+                        {worstMatchup && worstMatchup.opp !== bestMatchup?.opp && (
+                          <div style={{ background: "#F2E1DC", borderLeft: "5px solid #8A3F35", borderRadius: 8, padding: "12px 14px", fontSize: 14 }}>
+                            Pior matchup: <strong>{worstMatchup.opp}</strong> ({worstMatchup.winRate}%, {worstMatchup.wins}/{worstMatchup.total})
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {chartData.length > 0 && (
+                      <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 16, marginBottom: 8 }}>
+                        <BarChartCustom data={chartData} />
+                      </div>
+                    )}
+
+                    <div style={{ textAlign: "center", fontSize: 11, color: "#8A8270", marginTop: 16 }}>Gerado pelo Playbook</div>
+                  </div>
                 </div>
               </>
             )}
