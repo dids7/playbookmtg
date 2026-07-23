@@ -404,15 +404,11 @@ function prevMonthKey(key) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function computeMonthlyReport(allMatches, monthKeyStr) {
-  const matches = allMatches.filter((m) => monthKey(m.data) === monthKeyStr);
-  const prevMatches = allMatches.filter((m) => monthKey(m.data) === prevMonthKey(monthKeyStr));
-
+function computeReportStats(matches) {
   const total = matches.length;
   const wins = matches.filter((m) => m.resultado === "vitoria").length;
   const losses = total - wins;
   const winRate = total ? Math.round((wins / total) * 100) : 0;
-  const prevWinRate = prevMatches.length ? Math.round((prevMatches.filter((m) => m.resultado === "vitoria").length / prevMatches.length) * 100) : null;
 
   const byTipo = (tipo) => {
     const list = matches.filter((m) => m.tipo === tipo);
@@ -484,7 +480,7 @@ function computeMonthlyReport(allMatches, monthKeyStr) {
   const deckStats = Object.entries(byDeck).map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }));
 
   return {
-    matches, total, wins, losses, winRate, prevWinRate, torneio, treino, play, draw,
+    matches, total, wins, losses, winRate, torneio, treino, play, draw,
     matchupStats, bestMatchup, worstMatchups, mirrorMatches, mirrorWins, wonG1LostMatch,
     lossNotes, lossesWithMulligan, totalLosses,
     mullWinRateWith: mullWinRate(gamesWithMulligan), mullWinRateWithout: mullWinRate(gamesNoMulligan),
@@ -492,11 +488,23 @@ function computeMonthlyReport(allMatches, monthKeyStr) {
   };
 }
 
-function generateMonthlyNarrative(r, monthKeyStr) {
-  if (r.total === 0) return `Nenhuma partida registrada em ${monthLabel(monthKeyStr)} ainda.`;
+function computeMonthlyReport(allMatches, monthKeyStr) {
+  const matches = allMatches.filter((m) => monthKey(m.data) === monthKeyStr);
+  const prevMatches = allMatches.filter((m) => monthKey(m.data) === prevMonthKey(monthKeyStr));
+  const prevWinRate = prevMatches.length ? Math.round((prevMatches.filter((m) => m.resultado === "vitoria").length / prevMatches.length) * 100) : null;
+  return { ...computeReportStats(matches), prevWinRate };
+}
+
+function computeRangeReport(allMatches, start, end) {
+  const matches = allMatches.filter((m) => m.data >= start && m.data <= end);
+  return { ...computeReportStats(matches), prevWinRate: null };
+}
+
+function generateReportNarrative(r, periodLabel) {
+  if (r.total === 0) return `Nenhuma partida registrada em ${periodLabel} ainda.`;
   const parts = [];
 
-  let opening = `${monthLabel(monthKeyStr).charAt(0).toUpperCase() + monthLabel(monthKeyStr).slice(1)} fechou com ${r.winRate}% de vitórias (${r.wins}V/${r.losses}D em ${r.total} partida${r.total !== 1 ? "s" : ""})`;
+  let opening = `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} fechou com ${r.winRate}% de vitórias (${r.wins}V/${r.losses}D em ${r.total} partida${r.total !== 1 ? "s" : ""})`;
   if (r.prevWinRate !== null) {
     const delta = r.winRate - r.prevWinRate;
     if (delta > 5) opening += `, uma alta de ${delta} pontos em relação ao mês anterior. Boa evolução.`;
@@ -508,7 +516,7 @@ function generateMonthlyNarrative(r, monthKeyStr) {
   parts.push(opening);
 
   if (r.bestMatchup) {
-    parts.push(`O destaque do mês foi contra ${r.bestMatchup.opp} — você dominou esse matchup com ${r.bestMatchup.winRate}% de vitórias.`);
+    parts.push(`O destaque do período foi contra ${r.bestMatchup.opp} — você dominou esse matchup com ${r.bestMatchup.winRate}% de vitórias.`);
   }
   if (r.bestWinStreak >= 3) {
     parts.push(`Também vale comemorar a sequência de ${r.bestWinStreak} vitórias seguidas.`);
@@ -527,7 +535,7 @@ function generateMonthlyNarrative(r, monthKeyStr) {
     parts.push(`O mirror match também pesou: foram ${r.mirrorMatches.length} jogados, com só ${r.mirrorWins} vitória${r.mirrorWins !== 1 ? "s" : ""}.`);
   }
   if (r.lossNotes.length > 0) {
-    parts.push(`Suas próprias anotações do mês reforçam alguns desses pontos — vale reler antes do próximo torneio.`);
+    parts.push(`Suas próprias anotações do período reforçam alguns desses pontos — vale reler antes do próximo torneio.`);
   }
 
   if (r.torneio.total > 0 && r.treino.total > 0) {
@@ -899,6 +907,10 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [statsFormato, setStatsFormato] = useState("__all__");
   const [statsDeck, setStatsDeck] = useState("__all__");
   const [statsTipo, setStatsTipo] = useState("todos"); // todos | treino | torneio
+  const [statsPeriodMode, setStatsPeriodMode] = useState("todos"); // todos | mes | intervalo
+  const [statsPeriodMonth, setStatsPeriodMonth] = useState("");
+  const [statsRangeStart, setStatsRangeStart] = useState("");
+  const [statsRangeEnd, setStatsRangeEnd] = useState("");
   const [newDeckName, setNewDeckName] = useState("");
   const [newDeckCategoria, setNewDeckCategoria] = useState("");
   const [deckFormatoFilter, setDeckFormatoFilter] = useState("");
@@ -920,10 +932,16 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [sbSelected, setSbSelected] = useState([]);
   const [sbError, setSbError] = useState("");
   const [reportMonth, setReportMonth] = useState("");
+  const [reportMode, setReportMode] = useState("mes"); // mes | intervalo
+  const [reportRangeStart, setReportRangeStart] = useState("");
+  const [reportRangeEnd, setReportRangeEnd] = useState("");
   const [adminData, setAdminData] = useState(null);
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState("");
   const [adminMonthFilter, setAdminMonthFilter] = useState("__all__");
+  const [adminPeriodMode, setAdminPeriodMode] = useState("todos"); // todos | mes | intervalo
+  const [adminRangeStart, setAdminRangeStart] = useState("");
+  const [adminRangeEnd, setAdminRangeEnd] = useState("");
   const [adminFormatoFilter, setAdminFormatoFilter] = useState(FORMATOS[0]);
   const [adminCopied, setAdminCopied] = useState(false);
   const [imageGenerating, setImageGenerating] = useState(false);
@@ -1338,8 +1356,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     if (statsFormato !== "__all__") list = list.filter((m) => m.formato === statsFormato);
     if (statsDeck !== "__all__") list = list.filter((m) => m.meuDeck === statsDeck);
     if (statsTipo !== "todos") list = list.filter((m) => m.tipo === statsTipo);
+    if (statsPeriodMode === "mes" && statsPeriodMonth) list = list.filter((m) => monthKey(m.data) === statsPeriodMonth);
+    if (statsPeriodMode === "intervalo" && statsRangeStart && statsRangeEnd) {
+      list = list.filter((m) => m.data >= statsRangeStart && m.data <= statsRangeEnd);
+    }
     return list;
-  }, [data.matches, statsFormato, statsDeck, statsTipo]);
+  }, [data.matches, statsFormato, statsDeck, statsTipo, statsPeriodMode, statsPeriodMonth, statsRangeStart, statsRangeEnd]);
   const deckOptionsForStats = useMemo(() => {
     const names = statsFormato === "__all__"
       ? data.decks.map((d) => d.name)
@@ -1428,14 +1450,25 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     const keys = Array.from(new Set(data.matches.map((m) => monthKey(m.data))));
     return keys.sort().reverse();
   }, [data.matches]);
+  const reportPeriodLabel = useMemo(() => {
+    if (reportMode === "mes") return reportMonth ? monthLabel(reportMonth) : "";
+    if (reportRangeStart && reportRangeEnd) {
+      return `o período de ${reportRangeStart.split("-").reverse().join("/")} a ${reportRangeEnd.split("-").reverse().join("/")}`;
+    }
+    return "";
+  }, [reportMode, reportMonth, reportRangeStart, reportRangeEnd]);
   const monthlyReport = useMemo(() => {
-    if (!reportMonth) return null;
-    return computeMonthlyReport(data.matches, reportMonth);
-  }, [data.matches, reportMonth]);
+    if (reportMode === "mes") {
+      if (!reportMonth) return null;
+      return computeMonthlyReport(data.matches, reportMonth);
+    }
+    if (!reportRangeStart || !reportRangeEnd) return null;
+    return computeRangeReport(data.matches, reportRangeStart, reportRangeEnd);
+  }, [data.matches, reportMode, reportMonth, reportRangeStart, reportRangeEnd]);
   const monthlyNarrative = useMemo(() => {
-    if (!reportMonth || !monthlyReport) return "";
-    return generateMonthlyNarrative(monthlyReport, reportMonth);
-  }, [monthlyReport, reportMonth]);
+    if (!monthlyReport || !reportPeriodLabel) return "";
+    return generateReportNarrative(monthlyReport, reportPeriodLabel);
+  }, [monthlyReport, reportPeriodLabel]);
   const adminAvailableMonths = useMemo(() => {
     if (!adminData) return [];
     const keys = new Set();
@@ -1450,11 +1483,14 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       displayName: p.displayName,
       matches: p.matches.filter((m) => {
         if (adminFormatoFilter && m.formato !== adminFormatoFilter) return false;
-        if (adminMonthFilter !== "__all__" && monthKey(m.data) !== adminMonthFilter) return false;
+        if (adminPeriodMode === "mes" && adminMonthFilter !== "__all__" && monthKey(m.data) !== adminMonthFilter) return false;
+        if (adminPeriodMode === "intervalo" && adminRangeStart && adminRangeEnd) {
+          if (m.data < adminRangeStart || m.data > adminRangeEnd) return false;
+        }
         return true;
       }),
     }));
-  }, [adminData, adminMonthFilter, adminFormatoFilter]);
+  }, [adminData, adminMonthFilter, adminFormatoFilter, adminPeriodMode, adminRangeStart, adminRangeEnd]);
 
   const adminCombinedMatches = useMemo(() => adminFilteredByPlayer.flatMap((p) => p.matches), [adminFilteredByPlayer]);
 
@@ -1567,8 +1603,14 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     return Object.values(grouped).sort((a, b) => b.data.localeCompare(a.data));
   }, [adminFilteredByPlayer]);
 
+  const adminPeriodLabel = useMemo(() => {
+    if (adminPeriodMode === "todos") return "Todo o tempo";
+    if (adminPeriodMode === "mes") return adminMonthFilter === "__all__" ? "Todo o tempo" : monthLabel(adminMonthFilter).replace(/^./, (c) => c.toUpperCase());
+    return (adminRangeStart && adminRangeEnd) ? `${adminRangeStart.split("-").reverse().join("/")} a ${adminRangeEnd.split("-").reverse().join("/")}` : "Intervalo não definido";
+  }, [adminPeriodMode, adminMonthFilter, adminRangeStart, adminRangeEnd]);
+
   const adminReportText = useMemo(() => {
-    const periodo = adminMonthFilter === "__all__" ? "Todo o tempo" : monthLabel(adminMonthFilter).replace(/^./, (c) => c.toUpperCase());
+    const periodo = adminPeriodLabel;
     const lines = [];
     lines.push(`📊 RELATÓRIO DO TIME — ${periodo}`);
     lines.push("");
@@ -1596,7 +1638,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       if (worst && worst.name !== best?.name) lines.push(`  Pior: vs ${worst.name} (${worst.winRate}%)`);
     });
     return lines.join("\n");
-  }, [adminMonthFilter, adminOverall, adminTeamBestMatchup, adminTeamWorstMatchup, adminTournamentsWithPlayer, adminByPlayer, adminPlayerOfMonth, adminNeymarOfMonth]);
+  }, [adminPeriodLabel, adminOverall, adminTeamBestMatchup, adminTeamWorstMatchup, adminTournamentsWithPlayer, adminByPlayer, adminPlayerOfMonth, adminNeymarOfMonth]);
 
   const favoriteDecksByFormato = useMemo(() => {
     const grouped = {};
@@ -1940,6 +1982,41 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       }}>{o.label}</button>
                     ))}
                   </div>
+                </Field>
+
+                <div style={{ height: 12 }} />
+                <Field label="Período">
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                    {[{ key: "todos", label: "Todo o tempo" }, { key: "mes", label: "Mês" }, { key: "intervalo", label: "Intervalo" }].map((o) => (
+                      <button key={o.key} onClick={() => setStatsPeriodMode(o.key)} style={{
+                        flex: 1, padding: "8px 0", borderRadius: 6,
+                        border: statsPeriodMode === o.key ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                        background: statsPeriodMode === o.key ? "#2A2621" : "#F6F1E1",
+                        color: statsPeriodMode === o.key ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
+                      }}>{o.label}</button>
+                    ))}
+                  </div>
+                  {statsPeriodMode === "mes" && (
+                    availableMonths.length === 0 ? (
+                      <div style={{ fontSize: 13, color: "#8A3F35" }}>Nenhuma partida registrada ainda.</div>
+                    ) : (
+                      <select value={statsPeriodMonth || availableMonths[0]} onChange={(e) => setStatsPeriodMonth(e.target.value)} style={inputStyle}>
+                        {availableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
+                      </select>
+                    )
+                  )}
+                  {statsPeriodMode === "intervalo" && (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 4 }}>De</div>
+                        <DatePicker value={statsRangeStart} onChange={setStatsRangeStart} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 4 }}>Até</div>
+                        <DatePicker value={statsRangeEnd} onChange={setStatsRangeEnd} />
+                      </div>
+                    </div>
+                  )}
                 </Field>
 
                 <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px", margin: "14px 0" }}>
@@ -2340,24 +2417,53 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               )}
             </div>
 
-            <SectionLabel>Histórico mensal</SectionLabel>
+            <SectionLabel>Histórico</SectionLabel>
             <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
               {availableMonths.length === 0 ? (
                 <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhuma partida registrada ainda.</div>
               ) : (
                 <>
-                  <select
-                    value={reportMonth || availableMonths[0]}
-                    onChange={(e) => setReportMonth(e.target.value)}
-                    style={{ ...inputStyle, marginBottom: 10 }}
-                  >
-                    {availableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
-                  </select>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                    {[{ key: "mes", label: "Mês específico" }, { key: "intervalo", label: "Intervalo personalizado" }].map((o) => (
+                      <button key={o.key} onClick={() => setReportMode(o.key)} style={{
+                        flex: 1, padding: "8px 0", borderRadius: 6,
+                        border: reportMode === o.key ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                        background: reportMode === o.key ? "#2A2621" : "#EFE9D8",
+                        color: reportMode === o.key ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
+                      }}>{o.label}</button>
+                    ))}
+                  </div>
+
+                  {reportMode === "mes" ? (
+                    <select
+                      value={reportMonth || availableMonths[0]}
+                      onChange={(e) => setReportMonth(e.target.value)}
+                      style={{ ...inputStyle, marginBottom: 10 }}
+                    >
+                      {availableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
+                    </select>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 4 }}>De</div>
+                        <DatePicker value={reportRangeStart} onChange={setReportRangeStart} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 4 }}>Até</div>
+                        <DatePicker value={reportRangeEnd} onChange={setReportRangeEnd} />
+                      </div>
+                    </div>
+                  )}
+
                   <button
-                    onClick={() => { setReportMonth(reportMonth || availableMonths[0]); setScreen("relatorio"); }}
-                    style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+                    onClick={() => {
+                      if (reportMode === "mes") setReportMonth(reportMonth || availableMonths[0]);
+                      setScreen("relatorio");
+                    }}
+                    disabled={reportMode === "intervalo" && (!reportRangeStart || !reportRangeEnd)}
+                    style={{ width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: (reportMode === "intervalo" && (!reportRangeStart || !reportRangeEnd)) ? 0.6 : 1 }}
                   >
-                    Ver relatório do mês
+                    Ver relatório
                   </button>
                 </>
               )}
@@ -2388,13 +2494,15 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
           <div>
             <button onClick={() => setScreen("perfil")} style={{ background: "none", border: "none", color: "#6E6656", fontSize: 13, cursor: "pointer", padding: 0, marginBottom: 14 }}>‹ Voltar ao perfil</button>
 
-            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Relatório mensal</div>
+            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Relatório</div>
             <h2 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, margin: "4px 0 16px" }}>
-              {monthLabel(reportMonth).replace(/^./, (c) => c.toUpperCase())}
+              {reportMode === "mes"
+                ? monthLabel(reportMonth).replace(/^./, (c) => c.toUpperCase())
+                : `${reportRangeStart.split("-").reverse().join("/")} a ${reportRangeEnd.split("-").reverse().join("/")}`}
             </h2>
 
             {monthlyReport.total === 0 ? (
-              <div style={{ color: "#6E6656", fontSize: 14, textAlign: "center", padding: "30px 0" }}>Nenhuma partida registrada nesse mês.</div>
+              <div style={{ color: "#6E6656", fontSize: 14, textAlign: "center", padding: "30px 0" }}>Nenhuma partida registrada nesse período.</div>
             ) : (
               <>
                 <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px" }}>
@@ -2618,10 +2726,34 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 </Field>
                 <div style={{ height: 10 }} />
                 <Field label="Período">
-                  <select value={adminMonthFilter} onChange={(e) => setAdminMonthFilter(e.target.value)} style={inputStyle}>
-                    <option value="__all__">Todo o tempo</option>
-                    {adminAvailableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
-                  </select>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                    {[{ key: "todos", label: "Todo o tempo" }, { key: "mes", label: "Mês" }, { key: "intervalo", label: "Intervalo" }].map((o) => (
+                      <button key={o.key} onClick={() => setAdminPeriodMode(o.key)} style={{
+                        flex: 1, padding: "8px 0", borderRadius: 6,
+                        border: adminPeriodMode === o.key ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                        background: adminPeriodMode === o.key ? "#2A2621" : "#F6F1E1",
+                        color: adminPeriodMode === o.key ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
+                      }}>{o.label}</button>
+                    ))}
+                  </div>
+                  {adminPeriodMode === "mes" && (
+                    <select value={adminMonthFilter} onChange={(e) => setAdminMonthFilter(e.target.value)} style={inputStyle}>
+                      <option value="__all__">Selecione um mês</option>
+                      {adminAvailableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
+                    </select>
+                  )}
+                  {adminPeriodMode === "intervalo" && (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 4 }}>De</div>
+                        <DatePicker value={adminRangeStart} onChange={setAdminRangeStart} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 4 }}>Até</div>
+                        <DatePicker value={adminRangeEnd} onChange={setAdminRangeEnd} />
+                      </div>
+                    </div>
+                  )}
                 </Field>
 
                 <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px", margin: "14px 0" }}>
@@ -2814,7 +2946,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                         Relatório do Time{adminFormatoFilter ? ` · ${adminFormatoFilter}` : ""}
                       </div>
                       <div style={{ fontSize: 16, color: "#6E6656", marginTop: 4 }}>
-                        {adminMonthFilter === "__all__" ? "Todo o tempo" : monthLabel(adminMonthFilter).replace(/^./, (c) => c.toUpperCase())}
+                        {adminPeriodLabel}
                       </div>
                     </div>
 
