@@ -1028,6 +1028,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [sbError, setSbError] = useState("");
   const [reportMonth, setReportMonth] = useState("");
   const [reportMode, setReportMode] = useState("mes"); // mes | intervalo
+  const [reportDeck, setReportDeck] = useState("__all__");
   const [reportRangeStart, setReportRangeStart] = useState("");
   const [reportRangeEnd, setReportRangeEnd] = useState("");
   const [adminData, setAdminData] = useState(null);
@@ -1605,6 +1606,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     const keys = Array.from(new Set(data.matches.map((m) => monthKey(m.data))));
     return keys.sort().reverse();
   }, [data.matches]);
+  const reportDeckOptions = useMemo(() => {
+    return Array.from(new Set(data.matches.map((m) => m.meuDeck))).sort((a, b) => a.localeCompare(b));
+  }, [data.matches]);
   const reportPeriodLabel = useMemo(() => {
     if (reportMode === "mes") return reportMonth ? monthLabel(reportMonth) : "";
     if (reportRangeStart && reportRangeEnd) {
@@ -1613,13 +1617,14 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     return "";
   }, [reportMode, reportMonth, reportRangeStart, reportRangeEnd]);
   const monthlyReport = useMemo(() => {
+    const baseMatches = reportDeck === "__all__" ? data.matches : data.matches.filter((m) => m.meuDeck === reportDeck);
     if (reportMode === "mes") {
       if (!reportMonth) return null;
-      return computeMonthlyReport(data.matches, reportMonth);
+      return computeMonthlyReport(baseMatches, reportMonth);
     }
     if (!reportRangeStart || !reportRangeEnd) return null;
-    return computeRangeReport(data.matches, reportRangeStart, reportRangeEnd);
-  }, [data.matches, reportMode, reportMonth, reportRangeStart, reportRangeEnd]);
+    return computeRangeReport(baseMatches, reportRangeStart, reportRangeEnd);
+  }, [data.matches, reportMode, reportMonth, reportDeck, reportRangeStart, reportRangeEnd]);
   const monthlyNarrative = useMemo(() => {
     if (!monthlyReport || !reportPeriodLabel) return "";
     return generateReportNarrative(monthlyReport, reportPeriodLabel);
@@ -2679,6 +2684,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     </div>
                   )}
 
+                  <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 4 }}>Deck</div>
+                  <select value={reportDeck} onChange={(e) => setReportDeck(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }}>
+                    <option value="__all__">Todos os decks</option>
+                    {reportDeckOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+
                   <button
                     onClick={() => {
                       if (reportMode === "mes") setReportMonth(reportMonth || availableMonths[0]);
@@ -2719,11 +2730,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             <button onClick={() => setScreen("perfil")} style={{ background: "none", border: "none", color: "#6E6656", fontSize: 13, cursor: "pointer", padding: 0, marginBottom: 14 }}>‹ Voltar ao perfil</button>
 
             <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Relatório</div>
-            <h2 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, margin: "4px 0 16px" }}>
+            <h2 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, margin: "4px 0 4px" }}>
               {reportMode === "mes"
                 ? monthLabel(reportMonth).replace(/^./, (c) => c.toUpperCase())
                 : `${reportRangeStart.split("-").reverse().join("/")} a ${reportRangeEnd.split("-").reverse().join("/")}`}
             </h2>
+            <div style={{ fontSize: 13, color: "#6E6656", marginBottom: 16 }}>{reportDeck === "__all__" ? "Todos os decks" : reportDeck}</div>
 
             {monthlyReport.total === 0 ? (
               <div style={{ color: "#6E6656", fontSize: 14, textAlign: "center", padding: "30px 0" }}>Nenhuma partida registrada nesse período.</div>
