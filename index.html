@@ -122,7 +122,7 @@ function emptyGame() {
 function emptyForm() {
   return {
     formato: "", meuDeck: "", oponenteDeck: "", games: [emptyGame(), emptyGame()],
-    tipo: "treino", local: "", data: todayISO(), rodada: "", colocacao: "", nota: "",
+    tipo: "treino", local: "", data: todayISO(), rodada: "", colocacao: "", nota: "", torneioId: "",
   };
 }
 function matchOutcome(games) {
@@ -467,8 +467,13 @@ function computeReportStats(matches) {
 
   const torneiosMap = {};
   matches.filter((m) => m.tipo === "torneio").forEach((m) => {
-    const key = m.local + "|" + m.data;
-    torneiosMap[key] = { local: m.local, data: m.data, colocacao: m.colocacao };
+    const key = m.torneioId || (m.local + "|" + m.data);
+    if (!torneiosMap[key]) {
+      torneiosMap[key] = { local: m.local, data: m.data, colocacao: m.colocacao };
+    } else {
+      if (m.data < torneiosMap[key].data) torneiosMap[key].data = m.data;
+      if (!torneiosMap[key].colocacao && m.colocacao) torneiosMap[key].colocacao = m.colocacao;
+    }
   });
 
   const byDeck = {};
@@ -555,9 +560,9 @@ async function loadUserData(uidStr) {
   const snap = await getDoc(ref);
   if (snap.exists()) {
     const d = snap.data();
-    return { matches: d.matches || [], ownedDecks: d.ownedDecks || [], sideboards: d.sideboards || [] };
+    return { matches: d.matches || [], ownedDecks: d.ownedDecks || [], sideboards: d.sideboards || [], activeTournament: d.activeTournament || null };
   }
-  return { matches: [], ownedDecks: [], sideboards: [] };
+  return { matches: [], ownedDecks: [], sideboards: [], activeTournament: null };
 }
 async function saveMatches(uidStr, matches) {
   const { db, doc, setDoc } = window.__fb;
@@ -573,6 +578,11 @@ async function saveSideboards(uidStr, sideboards) {
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
   await setDoc(ref, { sideboards }, { merge: true });
+}
+async function saveActiveTournament(uidStr, activeTournament) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "users", uidStr);
+  await setDoc(ref, { activeTournament: activeTournament || null }, { merge: true });
 }
 
 // ---------- Auth gate ----------
@@ -891,7 +901,7 @@ function TeamGate({ user, onSignOut, onTeamReady, existingTeams, onSelectExistin
 // ---------- Main app ----------
 function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onRequestTeamGate }) {
   const [screen, setScreen] = useState("registrar");
-  const [data, setData] = useState({ decks: [], matches: [] });
+  const [data, setData] = useState({ decks: [], matches: [], activeTournament: null });
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
@@ -920,6 +930,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   useEffect(() => { ownedDecksRef.current = ownedDecks; }, [ownedDecks]);
   const [editingId, setEditingId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [novoTorneioRodadas, setNovoTorneioRodadas] = useState(null);
+  const [confirmDropTournament, setConfirmDropTournament] = useState(false);
   const [chartType, setChartType] = useState("bar");
   const [visible, setVisible] = useState(false);
   const [teamPlayers, setTeamPlayers] = useState([]);
@@ -1027,7 +1039,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     (async () => {
       try {
         const userData = await loadUserData(user.uid);
-        setData((prev) => ({ ...prev, matches: userData.matches }));
+        setData((prev) => ({ ...prev, matches: userData.matches, activeTournament: userData.activeTournament }));
         setOwnedDecks(userData.ownedDecks);
         setSideboards(userData.sideboards);
       } catch (e) {
@@ -1096,6 +1108,23 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     } catch (e) {
       setError("Não consegui salvar: " + (e && e.message ? e.message : "erro desconhecido"));
       return false;
+    }
+  }
+  async function persistActiveTournament(nextActiveTournament) {
+    try {
+      await saveActiveTournament(user.uid, nextActiveTournament);
+      return true;
+    } catch (e) {
+      setError("Não consegui atualizar o torneio: " + (e && e.message ? e.message : "erro desconhecido"));
+      return false;
+    }
+  }
+  async function handleDropTournament() {
+    setConfirmDropTournament(false);
+    const ok = await persistActiveTournament(null);
+    if (ok) {
+      setData((prev) => ({ ...prev, activeTournament: null }));
+      showActionToast("✓ Torneio encerrado (drop)");
     }
   }
 
@@ -1265,7 +1294,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       formato: match.formato || "", meuDeck: match.meuDeck, oponenteDeck: match.oponenteDeck,
       games: match.games.map((g) => ({ ...g })), tipo: match.tipo,
       local: match.local || "", data: match.data, rodada: match.rodada || "",
-      colocacao: match.colocacao || "", nota: match.nota || "",
+      colocacao: match.colocacao || "", nota: match.nota || "", torneioId: match.torneioId || "",
     });
     setEditingId(match.id);
     setError("");
@@ -1306,11 +1335,39 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       setSaving(false); setError("A partida está 1-1, registra o resultado do Jogo 3."); return;
     }
 
+    // Torneio: decide se essa partida continua o torneio ativo ou inicia um novo.
+    let torneioId = form.torneioId || "";
+    let rodadaToSave = form.rodada;
+    let localToSave = form.local;
+    let novoTorneioObj = null;
+    const temTorneioAtivo = data.activeTournament && !data.activeTournament.dropped;
+
+    if (form.tipo === "torneio" && !editingId) {
+      if (temTorneioAtivo) {
+        torneioId = data.activeTournament.id;
+        rodadaToSave = data.activeTournament.roundsPlayed + 1;
+        localToSave = data.activeTournament.local;
+      } else {
+        if (!form.local.trim()) {
+          setSaving(false); setError("Preenche a loja / evento do torneio."); return;
+        }
+        if (!novoTorneioRodadas) {
+          setSaving(false); setError("Escolhe quantas rodadas tem o torneio."); return;
+        }
+        torneioId = uid();
+        rodadaToSave = 1;
+        localToSave = form.local.trim();
+        novoTorneioObj = { id: torneioId, local: localToSave, formato: form.formato, totalRounds: novoTorneioRodadas, roundsPlayed: 0, dropped: false };
+      }
+    }
+
     try {
       const matchPayload = {
         id: editingId || uid(), formato: form.formato, meuDeck: form.meuDeck.trim(), oponenteDeck: form.oponenteDeck.trim(),
         games: form.games, resultado: outcome.outcome, score: outcome.score,
-        tipo: form.tipo, local: form.local, data: form.data, rodada: form.rodada,
+        tipo: form.tipo, local: form.tipo === "torneio" ? localToSave : form.local, data: form.data,
+        rodada: form.tipo === "torneio" ? rodadaToSave : "",
+        torneioId: form.tipo === "torneio" ? torneioId : "",
         colocacao: form.colocacao, nota: form.nota,
       };
       const nextMatches = editingId
@@ -1324,10 +1381,23 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         syncPlayerVisibility(team.teamId, user.uid, user.displayName || user.email, true, nextMatches).catch(() => {});
       }
       if (ok) {
+        if (form.tipo === "torneio" && !editingId) {
+          const baseTournament = novoTorneioObj || data.activeTournament;
+          const updatedRounds = baseTournament.roundsPlayed + 1;
+          if (updatedRounds >= baseTournament.totalRounds) {
+            await persistActiveTournament(null);
+            setData((prev) => ({ ...prev, activeTournament: null }));
+          } else {
+            const nextTournament = { ...baseTournament, roundsPlayed: updatedRounds };
+            await persistActiveTournament(nextTournament);
+            setData((prev) => ({ ...prev, activeTournament: nextTournament }));
+          }
+          setNovoTorneioRodadas(null);
+        }
         if (editingId) {
           setEditingId(null); setForm(emptyForm()); setScreen("estatisticas");
         } else {
-          setForm({ ...emptyForm(), formato: matchPayload.formato, meuDeck: matchPayload.meuDeck, tipo: matchPayload.tipo, local: matchPayload.tipo === "torneio" ? matchPayload.local : "" });
+          setForm({ ...emptyForm(), formato: matchPayload.formato, meuDeck: matchPayload.meuDeck, tipo: matchPayload.tipo, local: matchPayload.tipo === "torneio" ? "" : matchPayload.local });
         }
         setSavedFlash(true);
         setTimeout(() => setSavedFlash(false), 2200);
@@ -1586,8 +1656,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     adminFilteredByPlayer.forEach((p) => {
       const byEvent = {};
       p.matches.filter((m) => m.tipo === "torneio").forEach((m) => {
-        const key = m.local + "|" + m.data;
+        const key = m.torneioId || (m.local + "|" + m.data);
         if (!byEvent[key]) byEvent[key] = { local: m.local, data: m.data, wins: 0, losses: 0, draws: 0, colocacao: "" };
+        else if (m.data < byEvent[key].data) byEvent[key].data = m.data;
         if (m.resultado === "vitoria") byEvent[key].wins += 1;
         else if (m.resultado === "derrota") byEvent[key].losses += 1;
         else byEvent[key].draws += 1;
@@ -1770,7 +1841,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             <Field label="Tipo de partida">
               <div style={{ display: "flex", gap: 8 }}>
                 {[{ key: "torneio", label: "Torneio / Loja" }, { key: "treino", label: "Treino" }].map((o) => (
-                  <button key={o.key} onClick={() => updateField("tipo", o.key)} style={{
+                  <button key={o.key} onClick={() => { updateField("tipo", o.key); if (o.key === "treino") setNovoTorneioRodadas(null); }} style={{
                     flex: 1, padding: "10px 0", borderRadius: 6,
                     border: form.tipo === o.key ? "2px solid #2A2621" : "1px solid #C9C0A6",
                     background: form.tipo === o.key ? "#2A2621" : "#F6F1E1",
@@ -1779,12 +1850,52 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 ))}
               </div>
             </Field>
-            <Field label={form.tipo === "torneio" ? "Loja / evento" : "Com quem treinou (opcional)"}>
-              <input value={form.local} onChange={(e) => updateField("local", e.target.value)}
-                placeholder={form.tipo === "torneio" ? "Ex: Arena dos Cards" : "Ex: treino com amigos"} style={inputStyle} />
-            </Field>
-            {form.tipo === "torneio" && (
+            {form.tipo === "treino" && (
+              <Field label="Com quem treinou (opcional)">
+                <input value={form.local} onChange={(e) => updateField("local", e.target.value)}
+                  placeholder="Ex: treino com amigos" style={inputStyle} />
+              </Field>
+            )}
+            {form.tipo === "torneio" && !editingId && data.activeTournament && !data.activeTournament.dropped && (
+              <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Torneio em andamento: {data.activeTournament.local}</div>
+                <div style={{ color: "#6E6656" }}>Rodada {data.activeTournament.roundsPlayed + 1} de {data.activeTournament.totalRounds}</div>
+                {confirmDropTournament ? (
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button onClick={handleDropTournament} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "none", background: "#8A3F35", color: "#EFE9D8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar drop</button>
+                    <button onClick={() => setConfirmDropTournament(false)} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "1px solid #C9C0A6", background: "#EFE9D8", color: "#6E6656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setConfirmDropTournament(true)} style={{ marginTop: 8, padding: "8px 12px", borderRadius: 6, border: "1px solid #B15C3E", background: "transparent", color: "#B15C3E", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                    Encerrar torneio (Drop)
+                  </button>
+                )}
+              </div>
+            )}
+            {form.tipo === "torneio" && !editingId && (!data.activeTournament || data.activeTournament.dropped) && (
               <>
+                <Field label="Loja / evento">
+                  <input value={form.local} onChange={(e) => updateField("local", e.target.value)}
+                    placeholder="Ex: Arena dos Cards" style={inputStyle} />
+                </Field>
+                <Field label="Quantas rodadas tem o torneio?">
+                  <QtyPicker
+                    value={novoTorneioRodadas}
+                    onChange={setNovoTorneioRodadas}
+                    options={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}
+                    suffix=""
+                    placeholder="Selecionar"
+                    fullWidth
+                  />
+                </Field>
+              </>
+            )}
+            {form.tipo === "torneio" && editingId && (
+              <>
+                <Field label="Loja / evento">
+                  <input value={form.local} onChange={(e) => updateField("local", e.target.value)}
+                    placeholder="Ex: Arena dos Cards" style={inputStyle} />
+                </Field>
                 <Field label="Rodada">
                   <QtyPicker
                     value={form.rodada ? parseInt(form.rodada, 10) : null}
@@ -1795,10 +1906,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     fullWidth
                   />
                 </Field>
-                <Field label="Colocação final (opcional)">
-                  <input value={form.colocacao} onChange={(e) => updateField("colocacao", e.target.value)} placeholder="Ex: 3-1, Top 8" style={inputStyle} />
-                </Field>
               </>
+            )}
+            {form.tipo === "torneio" && (
+              <Field label="Colocação final (opcional)">
+                <input value={form.colocacao} onChange={(e) => updateField("colocacao", e.target.value)} placeholder="Ex: 3-1, Top 8" style={inputStyle} />
+              </Field>
             )}
             <Field label="Data">
               <DatePicker value={form.data} onChange={(iso) => updateField("data", iso)} />
