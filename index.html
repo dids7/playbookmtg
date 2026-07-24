@@ -122,7 +122,7 @@ function emptyGame() {
 function emptyForm() {
   return {
     formato: "", meuDeck: "", oponenteDeck: "", games: [emptyGame(), emptyGame()],
-    tipo: "treino", local: "", data: todayISO(), rodada: "", colocacao: "", nota: "", torneioId: "",
+    tipo: "treino", local: "", data: todayISO(), rodada: "", colocacao: "", nota: "", torneioId: "", tagsDerrota: [],
   };
 }
 function matchOutcome(games) {
@@ -393,6 +393,7 @@ function computeMatchStats(matches) {
 function deckKey(formato, name) { return formato + "||" + name; }
 
 const MONTH_NAMES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+const LOSS_TAGS = ["Mana screw", "Mana flood", "Misplay", "Sideboard errado", "Mulligan ruim", "Deck do oponente mais forte", "Topdeck do oponente", "Outro"];
 function monthKey(dateStr) { return dateStr.slice(0, 7); } // "2026-07"
 function monthLabel(key) {
   const [y, m] = key.split("-");
@@ -402,6 +403,13 @@ function prevMonthKey(key) {
   const [y, m] = key.split("-").map((n) => parseInt(n, 10));
   const d = new Date(y, m - 2, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function weekStartLabel(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const day = d.getDay();
+  const diffToMonday = (day + 6) % 7;
+  d.setDate(d.getDate() - diffToMonday);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function computeReportStats(matches) {
@@ -433,9 +441,20 @@ function computeReportStats(matches) {
     byOpp[m.oponenteDeck].total += 1;
     if (m.resultado === "vitoria") byOpp[m.oponenteDeck].wins += 1;
   });
-  const matchupStats = Object.entries(byOpp).map(([opp, v]) => ({
-    opp, total: v.total, wins: v.wins, losses: v.total - v.wins, winRate: Math.round((v.wins / v.total) * 100),
-  })).sort((a, b) => b.total - a.total);
+  const matchupStats = Object.entries(byOpp).map(([opp, v]) => {
+    const oppMatches = matches.filter((m) => m.oponenteDeck === opp);
+    const g1Games = oppMatches.map((m) => m.games && m.games[0]).filter(Boolean);
+    const postBoardGames = oppMatches.flatMap((m) => (m.games || []).slice(1));
+    const g1Wins = g1Games.filter((g) => g.resultado === "vitoria").length;
+    const postWins = postBoardGames.filter((g) => g.resultado === "vitoria").length;
+    const sampleLabel = v.total < 3 ? "amostra pequena" : v.total < 7 ? "amostra média" : "amostra boa";
+    return {
+      opp, total: v.total, wins: v.wins, losses: v.total - v.wins, winRate: Math.round((v.wins / v.total) * 100),
+      g1WinRate: g1Games.length ? Math.round((g1Wins / g1Games.length) * 100) : null,
+      postBoardWinRate: postBoardGames.length ? Math.round((postWins / postBoardGames.length) * 100) : null,
+      sampleLabel,
+    };
+  }).sort((a, b) => b.total - a.total);
 
   const bestMatchup = [...matchupStats].filter((m) => m.total >= 2).sort((a, b) => b.winRate - a.winRate)[0] || null;
   const worstMatchups = [...matchupStats].filter((m) => m.total >= 2).sort((a, b) => a.winRate - b.winRate).slice(0, 3);
@@ -457,6 +476,25 @@ function computeReportStats(matches) {
     return list.length ? Math.round((w / list.length) * 100) : 0;
   };
 
+  const mullByCount = [0, 1, 2].map((n) => {
+    const list = n === 2 ? allGames.filter((g) => g.mulligan >= 2) : allGames.filter((g) => g.mulligan === n);
+    return {
+      label: n === 0 ? "Sem mulligan" : n === 1 ? "1 mulligan" : "2+ mulligans",
+      total: list.length, winRate: mullWinRate(list),
+    };
+  });
+  const mullOnPlay = allGames.filter((g) => g.mulligan > 0 && g.playDraw === "play");
+  const mullOnDraw = allGames.filter((g) => g.mulligan > 0 && g.playDraw === "draw");
+  const mullByPlayDraw = {
+    play: { total: mullOnPlay.length, winRate: mullWinRate(mullOnPlay) },
+    draw: { total: mullOnDraw.length, winRate: mullWinRate(mullOnDraw) },
+  };
+
+  const lostG1 = matches.filter((m) => m.games && m.games[0] && m.games[0].resultado === "derrota");
+  const comebackRate = lostG1.length ? Math.round((lostG1.filter((m) => m.resultado === "vitoria").length / lostG1.length) * 100) : 0;
+  const wonG1 = matches.filter((m) => m.games && m.games[0] && m.games[0].resultado === "vitoria");
+  const chokeRate = wonG1.length ? Math.round((wonG1LostMatch.length / wonG1.length) * 100) : 0;
+
   const sorted = [...matches].sort((a, b) => a.data.localeCompare(b.data));
   let curStreak = 0, curType = null, bestWinStreak = 0, bestLossStreak = 0;
   sorted.forEach((m) => {
@@ -465,16 +503,42 @@ function computeReportStats(matches) {
     if (curType === "derrota") bestLossStreak = Math.max(bestLossStreak, curStreak);
   });
 
+  const timelineMap = {};
+  sorted.forEach((m) => {
+    const wk = weekStartLabel(m.data);
+    if (!timelineMap[wk]) timelineMap[wk] = { label: wk, total: 0, wins: 0 };
+    timelineMap[wk].total += 1;
+    if (m.resultado === "vitoria") timelineMap[wk].wins += 1;
+  });
+  const winRateTimeline = Object.values(timelineMap).map((w) => ({ ...w, winRate: w.total ? Math.round((w.wins / w.total) * 100) : 0 }));
+
+  const rodadaMap = {};
+  matches.filter((m) => m.tipo === "torneio" && m.rodada).forEach((m) => {
+    const r = m.rodada;
+    rodadaMap[r] = rodadaMap[r] || { rodada: r, total: 0, wins: 0 };
+    rodadaMap[r].total += 1;
+    if (m.resultado === "vitoria") rodadaMap[r].wins += 1;
+  });
+  const rodadaStats = Object.values(rodadaMap).map((r) => ({ ...r, winRate: r.total ? Math.round((r.wins / r.total) * 100) : 0 })).sort((a, b) => a.rodada - b.rodada);
+
   const torneiosMap = {};
   matches.filter((m) => m.tipo === "torneio").forEach((m) => {
     const key = m.torneioId || (m.local + "|" + m.data);
     if (!torneiosMap[key]) {
-      torneiosMap[key] = { local: m.local, data: m.data, colocacao: m.colocacao };
+      torneiosMap[key] = { local: m.local, data: m.data, colocacao: m.colocacao, meuDeck: m.meuDeck };
     } else {
       if (m.data < torneiosMap[key].data) torneiosMap[key].data = m.data;
       if (!torneiosMap[key].colocacao && m.colocacao) torneiosMap[key].colocacao = m.colocacao;
     }
   });
+  const torneiosList = Object.values(torneiosMap);
+
+  const colocacaoPorDeckMap = {};
+  torneiosList.filter((t) => t.colocacao && t.colocacao.trim()).forEach((t) => {
+    colocacaoPorDeckMap[t.meuDeck] = colocacaoPorDeckMap[t.meuDeck] || [];
+    colocacaoPorDeckMap[t.meuDeck].push(t.colocacao.trim());
+  });
+  const colocacaoPorDeck = Object.entries(colocacaoPorDeckMap).map(([deck, colocacoes]) => ({ deck, colocacoes }));
 
   const byDeck = {};
   matches.forEach((m) => {
@@ -484,12 +548,31 @@ function computeReportStats(matches) {
   });
   const deckStats = Object.entries(byDeck).map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }));
 
+  const matrixMap = {};
+  matches.forEach((m) => {
+    const key = m.meuDeck + "|" + m.oponenteDeck;
+    matrixMap[key] = matrixMap[key] || { meuDeck: m.meuDeck, oponenteDeck: m.oponenteDeck, total: 0, wins: 0 };
+    matrixMap[key].total += 1;
+    if (m.resultado === "vitoria") matrixMap[key].wins += 1;
+  });
+  const deckMatchupMatrix = Object.values(matrixMap).map((v) => ({ ...v, winRate: Math.round((v.wins / v.total) * 100) })).sort((a, b) => b.total - a.total);
+
+  const tagCounts = {};
+  matches.filter((m) => m.resultado === "derrota" && m.tagsDerrota && m.tagsDerrota.length > 0).forEach((m) => {
+    m.tagsDerrota.forEach((tag) => { tagCounts[tag] = (tagCounts[tag] || 0) + 1; });
+  });
+  const lossTagStats = Object.entries(tagCounts)
+    .map(([tag, count]) => ({ tag, count, percent: totalLosses ? Math.round((count / totalLosses) * 100) : 0 }))
+    .sort((a, b) => b.count - a.count);
+
   return {
     matches, total, wins, losses, winRate, torneio, treino, play, draw,
     matchupStats, bestMatchup, worstMatchups, mirrorMatches, mirrorWins, wonG1LostMatch,
     lossNotes, lossesWithMulligan, totalLosses,
     mullWinRateWith: mullWinRate(gamesWithMulligan), mullWinRateWithout: mullWinRate(gamesNoMulligan),
-    bestWinStreak, bestLossStreak, torneios: Object.values(torneiosMap), deckStats,
+    mullByCount, mullByPlayDraw, comebackRate, chokeRate, lostG1Total: lostG1.length, wonG1Total: wonG1.length,
+    bestWinStreak, bestLossStreak, torneios: torneiosList, deckStats,
+    winRateTimeline, rodadaStats, colocacaoPorDeck, deckMatchupMatrix, lossTagStats,
   };
 }
 
@@ -1295,6 +1378,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       games: match.games.map((g) => ({ ...g })), tipo: match.tipo,
       local: match.local || "", data: match.data, rodada: match.rodada || "",
       colocacao: match.colocacao || "", nota: match.nota || "", torneioId: match.torneioId || "",
+      tagsDerrota: match.tagsDerrota || [],
     });
     setEditingId(match.id);
     setError("");
@@ -1369,6 +1453,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         rodada: form.tipo === "torneio" ? rodadaToSave : "",
         torneioId: form.tipo === "torneio" ? torneioId : "",
         colocacao: form.colocacao, nota: form.nota,
+        tagsDerrota: outcome.outcome === "derrota" ? form.tagsDerrota : [],
       };
       const nextMatches = editingId
         ? data.matches.map((m) => (m.id === editingId ? matchPayload : m))
@@ -1838,6 +1923,29 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               <span style={{ fontWeight: 700, color: "#2A2621" }}>{matchOutcome(form.games).score}</span>
             </div>
 
+            {matchOutcome(form.games).outcome === "derrota" && (
+              <Field label="Por que perdeu? (opcional, pode marcar mais de um)">
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {LOSS_TAGS.map((tag) => {
+                    const active = form.tagsDerrota.includes(tag);
+                    return (
+                      <button key={tag} onClick={() => {
+                        setForm((f) => ({
+                          ...f,
+                          tagsDerrota: f.tagsDerrota.includes(tag) ? f.tagsDerrota.filter((t) => t !== tag) : [...f.tagsDerrota, tag],
+                        }));
+                      }} style={{
+                        padding: "6px 10px", borderRadius: 14, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                        border: active ? "2px solid #8A3F35" : "1px solid #C9C0A6",
+                        background: active ? "#8A3F35" : "#F6F1E1",
+                        color: active ? "#EFE9D8" : "#6E6656",
+                      }}>{tag}</button>
+                    );
+                  })}
+                </div>
+              </Field>
+            )}
+
             <Field label="Tipo de partida">
               <div style={{ display: "flex", gap: 8 }}>
                 {[{ key: "torneio", label: "Torneio / Loja" }, { key: "treino", label: "Treino" }].map((o) => (
@@ -2220,6 +2328,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       <div style={{ fontSize: 12, color: "#6E6656", marginTop: 6 }}>
                         {m.tipo === "torneio" ? `${m.local || "Torneio"}${m.rodada ? ` · R${m.rodada}` : ""}` : m.local ? m.local : "Treino"}
                       </div>
+                      {m.tagsDerrota && m.tagsDerrota.length > 0 && (
+                        <div style={{ fontSize: 11, color: "#8A3F35", marginTop: 4 }}>{m.tagsDerrota.join(" · ")}</div>
+                      )}
                       {m.nota && <div style={{ fontSize: 13, color: "#4A4436", marginTop: 6, fontStyle: "italic" }}>"{m.nota}"</div>}
                       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                         <button onClick={() => startEdit(m)} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "1px solid #C9C0A6", background: "#EFE9D8", color: "#2A2621", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Editar</button>
@@ -2751,15 +2862,57 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   })()} />
                 </div>
 
-                <SectionLabel>Impacto do mulligan (geral)</SectionLabel>
+                <SectionLabel>Detalhe por matchup (G1 vs. pós-board)</SectionLabel>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {monthlyReport.matchupStats.map((m, i) => (
+                    <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ fontWeight: 700 }}>{m.opp}</span>
+                        <span style={{ fontSize: 11, color: "#8A8270" }}>{m.sampleLabel} · {m.total} partida{m.total !== 1 ? "s" : ""}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#6E6656", marginTop: 4 }}>
+                        Geral: {m.winRate}% ({m.wins}/{m.total})
+                        {m.g1WinRate !== null && ` · Jogo 1: ${m.g1WinRate}%`}
+                        {m.postBoardWinRate !== null && ` · Pós-board: ${m.postBoardWinRate}%`}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <SectionLabel>Comeback vs. Choke</SectionLabel>
                 <div style={{ display: "flex", gap: 8 }}>
                   <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
-                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Com mulligan</div>
-                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.mullWinRateWith}%</div>
+                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Vira depois de perder G1</div>
+                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4, color: "#4B6B4E" }}>{monthlyReport.comebackRate}%</div>
+                    <div style={{ fontSize: 11, color: "#8A8270" }}>em {monthlyReport.lostG1Total} partida{monthlyReport.lostG1Total !== 1 ? "s" : ""} perdendo G1</div>
                   </div>
                   <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
-                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Sem mulligan</div>
-                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.mullWinRateWithout}%</div>
+                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Perde depois de ganhar G1</div>
+                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4, color: "#8A3F35" }}>{monthlyReport.chokeRate}%</div>
+                    <div style={{ fontSize: 11, color: "#8A8270" }}>em {monthlyReport.wonG1Total} partida{monthlyReport.wonG1Total !== 1 ? "s" : ""} ganhando G1</div>
+                  </div>
+                </div>
+
+                <SectionLabel>Impacto do mulligan (detalhado)</SectionLabel>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {monthlyReport.mullByCount.map((b, i) => (
+                    <div key={i} style={{ flex: "1 1 30%", background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                      <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>{b.label}</div>
+                      <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{b.total ? `${b.winRate}%` : "—"}</div>
+                      <div style={{ fontSize: 11, color: "#8A8270" }}>{b.total} jogo{b.total !== 1 ? "s" : ""}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Mulligan jogando (play)</div>
+                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.mullByPlayDraw.play.total ? `${monthlyReport.mullByPlayDraw.play.winRate}%` : "—"}</div>
+                    <div style={{ fontSize: 11, color: "#8A8270" }}>{monthlyReport.mullByPlayDraw.play.total} jogo{monthlyReport.mullByPlayDraw.play.total !== 1 ? "s" : ""}</div>
+                  </div>
+                  <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                    <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Mulligan na compra (draw)</div>
+                    <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{monthlyReport.mullByPlayDraw.draw.total ? `${monthlyReport.mullByPlayDraw.draw.winRate}%` : "—"}</div>
+                    <div style={{ fontSize: 11, color: "#8A8270" }}>{monthlyReport.mullByPlayDraw.draw.total} jogo{monthlyReport.mullByPlayDraw.draw.total !== 1 ? "s" : ""}</div>
                   </div>
                 </div>
 
@@ -2774,6 +2927,76 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4, color: "#8A3F35" }}>{monthlyReport.bestLossStreak}</div>
                   </div>
                 </div>
+
+                {monthlyReport.winRateTimeline.length > 1 && (
+                  <>
+                    <SectionLabel>Evolução do win rate (por semana)</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {monthlyReport.winRateTimeline.map((w, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 12, color: "#6E6656" }}>Semana de {w.label}</span>
+                          <span style={{ fontSize: 13 }}><strong>{w.winRate}%</strong> <span style={{ color: "#8A8270" }}>({w.wins}/{w.total})</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {monthlyReport.rodadaStats.length > 0 && (
+                  <>
+                    <SectionLabel>Win rate por rodada do torneio</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {monthlyReport.rodadaStats.map((r, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 12, color: "#6E6656" }}>Rodada {r.rodada}</span>
+                          <span style={{ fontSize: 13 }}><strong>{r.winRate}%</strong> <span style={{ color: "#8A8270" }}>({r.wins}/{r.total})</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {monthlyReport.lossTagStats.length > 0 && (
+                  <>
+                    <SectionLabel>Motivos de derrota</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {monthlyReport.lossTagStats.map((t, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 12, color: "#6E6656" }}>{t.tag}</span>
+                          <span style={{ fontSize: 13 }}><strong>{t.percent}%</strong> <span style={{ color: "#8A8270" }}>({t.count}x)</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {monthlyReport.deckMatchupMatrix.length > 1 && (
+                  <>
+                    <SectionLabel>Matriz completa deck vs. deck</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {monthlyReport.deckMatchupMatrix.map((mx, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "8px 14px", display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ fontSize: 12, color: "#6E6656" }}>{mx.meuDeck} vs {mx.oponenteDeck}</span>
+                          <span style={{ fontSize: 13 }}><strong>{mx.winRate}%</strong> <span style={{ color: "#8A8270" }}>({mx.wins}/{mx.total})</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {monthlyReport.colocacaoPorDeck.length > 0 && (
+                  <>
+                    <SectionLabel>Colocação por deck</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {monthlyReport.colocacaoPorDeck.map((c, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px" }}>
+                          <div style={{ fontWeight: 700 }}>{c.deck}</div>
+                          <div style={{ fontSize: 12, color: "#6E6656", marginTop: 2 }}>{c.colocacoes.join(" · ")}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
 
                 {monthlyReport.torneios.length > 0 && (
                   <>
