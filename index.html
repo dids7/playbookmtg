@@ -273,6 +273,7 @@ const DEFAULT_DECKS_BY_FORMATO = {
   "Duel Commander 500": DEFAULT_DUEL500_DECKS,
   "Duel Commander": DEFAULT_DUEL_COMMANDER_DECKS,
 };
+const DEFAULT_LOJAS = ["Polar Jogos", "Cross Guild", "Ludenz", "Mont", "Bazar de Bagda"];
 
 async function seedDefaultDecksIfNeeded(teamId, decks) {
   const { db, doc, setDoc } = window.__fb;
@@ -287,9 +288,19 @@ async function seedDefaultDecksIfNeeded(teamId, decks) {
   if (!changed) return;
   const ref = doc(db, "teams", teamId, "data", "catalog");
   try {
-    await setDoc(ref, { decks: newDecks });
+    await setDoc(ref, { decks: newDecks }, { merge: true });
   } catch (e) {
     console.error("Erro ao popular decks padrão:", e);
+  }
+}
+async function seedDefaultLojasIfNeeded(teamId, lojas) {
+  if (lojas && lojas.length > 0) return;
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "teams", teamId, "data", "catalog");
+  try {
+    await setDoc(ref, { lojas: DEFAULT_LOJAS }, { merge: true });
+  } catch (e) {
+    console.error("Erro ao popular lojas padrão:", e);
   }
 }
 
@@ -301,9 +312,10 @@ function subscribeSharedCatalog(teamId, callback) {
       const d = snap.data();
       const decksRaw = d.decks || [];
       const decks = decksRaw.map((dk) => (typeof dk === "string" ? { name: dk, formato: "" } : dk));
-      callback(decks);
+      const lojas = d.lojas || [];
+      callback({ decks, lojas });
     } else {
-      callback([]);
+      callback({ decks: [], lojas: [] });
     }
   }, (err) => {
     console.error("Erro ao sincronizar catálogo compartilhado:", err);
@@ -312,7 +324,12 @@ function subscribeSharedCatalog(teamId, callback) {
 async function saveSharedDecks(teamId, decks) {
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "teams", teamId, "data", "catalog");
-  await setDoc(ref, { decks });
+  await setDoc(ref, { decks }, { merge: true });
+}
+async function saveSharedLojas(teamId, lojas) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "teams", teamId, "data", "catalog");
+  await setDoc(ref, { lojas }, { merge: true });
 }
 
 // Jogadores: perfil compartilhável com toggle de visibilidade, isolado por time
@@ -984,7 +1001,7 @@ function TeamGate({ user, onSignOut, onTeamReady, existingTeams, onSelectExistin
 // ---------- Main app ----------
 function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onRequestTeamGate }) {
   const [screen, setScreen] = useState("registrar");
-  const [data, setData] = useState({ decks: [], matches: [], activeTournament: null });
+  const [data, setData] = useState({ decks: [], matches: [], activeTournament: null, lojas: [] });
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
@@ -1006,6 +1023,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [statsRangeEnd, setStatsRangeEnd] = useState("");
   const [newDeckName, setNewDeckName] = useState("");
   const [newDeckCategoria, setNewDeckCategoria] = useState("");
+  const [newLojaNome, setNewLojaNome] = useState("");
   const [deckFormatoFilter, setDeckFormatoFilter] = useState("");
   const [deckError, setDeckError] = useState("");
   const [ownedDecks, setOwnedDecks] = useState([]);
@@ -1114,8 +1132,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     let catalogLoaded = false;
     const checkDone = () => { if (matchesLoaded && catalogLoaded) setLoading(false); };
 
-    const unsubscribe = subscribeSharedCatalog(team.teamId, (decks) => {
-      setData((prev) => ({ ...prev, decks }));
+    const unsubscribe = subscribeSharedCatalog(team.teamId, ({ decks, lojas }) => {
+      setData((prev) => ({ ...prev, decks, lojas }));
       catalogLoaded = true;
       checkDone();
     });
@@ -1164,7 +1182,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   useEffect(() => {
     if (loading) return;
     seedDefaultDecksIfNeeded(team.teamId, data.decks);
-  }, [loading, data.decks]);
+    seedDefaultLojasIfNeeded(team.teamId, data.lojas);
+  }, [loading, data.decks, data.lojas]);
 
   useEffect(() => {
     if (screen !== "admin" || !isTeamOwner) return;
@@ -1184,6 +1203,25 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       setError("Não consegui salvar no catálogo compartilhado: " + (e && e.message ? e.message : "erro desconhecido"));
       return false;
     }
+  }
+  async function persistLojas(nextLojas) {
+    try {
+      await saveSharedLojas(team.teamId, nextLojas);
+      setData((prev) => ({ ...prev, lojas: nextLojas }));
+      return true;
+    } catch (e) {
+      setError("Não consegui salvar a lista de lojas: " + (e && e.message ? e.message : "erro desconhecido"));
+      return false;
+    }
+  }
+  async function handleAddLoja(nome) {
+    const trimmed = (nome || "").trim();
+    if (!trimmed) return;
+    if (data.lojas.includes(trimmed)) return;
+    await persistLojas([...data.lojas, trimmed].sort((a, b) => a.localeCompare(b)));
+  }
+  async function handleRemoveLoja(nome) {
+    await persistLojas(data.lojas.filter((l) => l !== nome));
   }
   async function persistMatches(nextMatches) {
     try {
@@ -1988,8 +2026,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             {form.tipo === "torneio" && !editingId && (!data.activeTournament || data.activeTournament.dropped) && (
               <>
                 <Field label="Loja / evento">
-                  <input value={form.local} onChange={(e) => updateField("local", e.target.value)}
-                    placeholder="Ex: Arena dos Cards" style={inputStyle} />
+                  <select value={form.local} onChange={(e) => updateField("local", e.target.value)} style={inputStyle}>
+                    <option value="">Selecionar</option>
+                    {data.lojas.map((l) => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                  {data.lojas.length === 0 && (
+                    <div style={{ fontSize: 12, color: "#8A8270", marginTop: 4 }}>Nenhuma loja cadastrada — peça pro dono do time cadastrar no Painel de Administração.</div>
+                  )}
                 </Field>
                 <Field label="Quantas rodadas tem o torneio?">
                   <QtyPicker
@@ -2006,8 +2049,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             {form.tipo === "torneio" && editingId && (
               <>
                 <Field label="Loja / evento">
-                  <input value={form.local} onChange={(e) => updateField("local", e.target.value)}
-                    placeholder="Ex: Arena dos Cards" style={inputStyle} />
+                  <select value={form.local} onChange={(e) => updateField("local", e.target.value)} style={inputStyle}>
+                    <option value="">Selecionar</option>
+                    {data.lojas.map((l) => <option key={l} value={l}>{l}</option>)}
+                    {form.local && !data.lojas.includes(form.local) && <option value={form.local}>{form.local} (antiga)</option>}
+                  </select>
                 </Field>
                 <Field label="Rodada">
                   <QtyPicker
@@ -3061,6 +3107,29 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
             <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Administração</div>
             <h2 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, margin: "4px 0 16px" }}>Estatísticas do time</h2>
+
+            <SectionLabel>Lojas do time</SectionLabel>
+            <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <input value={newLojaNome} onChange={(e) => setNewLojaNome(e.target.value)} placeholder="Nome da loja"
+                  style={{ ...inputStyle, flex: 1 }} />
+                <button onClick={() => { handleAddLoja(newLojaNome); setNewLojaNome(""); }} style={{
+                  padding: "0 16px", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, cursor: "pointer",
+                }}>Adicionar</button>
+              </div>
+              {data.lojas.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhuma loja cadastrada ainda.</div>
+              ) : (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {data.lojas.map((l) => (
+                    <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#EFE9D8", borderRadius: 14, padding: "5px 10px", fontSize: 12, fontWeight: 700 }}>
+                      {l}
+                      <button onClick={() => handleRemoveLoja(l)} style={{ border: "none", background: "none", color: "#8A3F35", fontWeight: 700, cursor: "pointer", padding: 0, fontSize: 13 }}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {adminLoading && <div style={{ color: "#6E6656", fontSize: 14 }}>Carregando…</div>}
             {adminError && <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 14 }}>{adminError}</div>}
