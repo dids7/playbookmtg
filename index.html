@@ -210,16 +210,17 @@ function generateInviteCode() {
 
 const TEAM_MAX_MEMBERS = 10;
 
-async function createTeam(uidStr, teamName) {
+async function createTeam(uidStr, teamName, displayName) {
   const { db, doc, collection, setDoc, arrayUnion } = window.__fb;
   const inviteCode = generateInviteCode();
   const teamRef = doc(collection(db, "teams"));
   await setDoc(teamRef, { name: teamName, inviteCode, ownerUid: uidStr, createdAt: Date.now(), memberCount: 1 });
   await setDoc(doc(db, "users", uidStr), { teamIds: arrayUnion(teamRef.id), activeTeamId: teamRef.id }, { merge: true });
+  await setDoc(doc(db, "teams", teamRef.id, "members", uidStr), { displayName: displayName || "Jogador", joinedAt: Date.now() });
   return { teamId: teamRef.id, inviteCode, ownerUid: uidStr };
 }
 
-async function joinTeamByCode(uidStr, code) {
+async function joinTeamByCode(uidStr, code, displayName) {
   const { db, collection, query, where, getDocs, doc, setDoc, updateDoc, increment, arrayUnion } = window.__fb;
   const normalized = code.trim().toUpperCase();
   const q = query(collection(db, "teams"), where("inviteCode", "==", normalized));
@@ -233,6 +234,7 @@ async function joinTeamByCode(uidStr, code) {
   }
   await setDoc(doc(db, "users", uidStr), { teamIds: arrayUnion(teamDoc.id), activeTeamId: teamDoc.id }, { merge: true });
   await updateDoc(doc(db, "teams", teamDoc.id), { memberCount: increment(1) });
+  await setDoc(doc(db, "teams", teamDoc.id, "members", uidStr), { displayName: displayName || "Jogador", joinedAt: Date.now() });
   return { teamId: teamDoc.id, teamName: teamData.name, inviteCode: teamData.inviteCode, ownerUid: teamData.ownerUid };
 }
 
@@ -362,6 +364,51 @@ async function loadAllTeamMatches(teamId) {
     list.push({ uid: docSnap.id, displayName: d.displayName || "Jogador", matches: d.matches || [] });
   });
   return list;
+}
+async function loadTeamBackupData(teamId) {
+  const { db, doc, getDoc, collection, getDocs } = window.__fb;
+
+  const teamSnap = await getDoc(doc(db, "teams", teamId));
+  const teamInfo = teamSnap.exists() ? teamSnap.data() : null;
+
+  const catalogSnap = await getDoc(doc(db, "teams", teamId, "data", "catalog"));
+  const catalog = catalogSnap.exists() ? catalogSnap.data() : { decks: [], lojas: [] };
+
+  const membersSnap = await getDocs(collection(db, "teams", teamId, "members"));
+  const members = {};
+  membersSnap.forEach((d) => { members[d.id] = d.data(); });
+
+  const playersSnap = await getDocs(collection(db, "teams", teamId, "players"));
+  const players = {};
+  playersSnap.forEach((d) => { players[d.id] = d.data(); });
+
+  const allMatchesSnap = await getDocs(collection(db, "teams", teamId, "allMatches"));
+  const allMatches = {};
+  allMatchesSnap.forEach((d) => { allMatches[d.id] = d.data(); });
+
+  // Junta os UIDs conhecidos de todas as fontes, pra não deixar ninguém de fora
+  // mesmo em times criados antes da coleção "members" existir.
+  const uids = new Set([...Object.keys(members), ...Object.keys(players), ...Object.keys(allMatches)]);
+
+  const jogadores = [];
+  for (const uid of uids) {
+    const mirror = allMatches[uid] || {};
+    jogadores.push({
+      uid,
+      displayName: (members[uid] && members[uid].displayName) || mirror.displayName || "Jogador",
+      matches: mirror.matches || [],
+      ownedDecks: mirror.ownedDecks || [],
+      sideboards: mirror.sideboards || [],
+      activeTournament: mirror.activeTournament || null,
+    });
+  }
+
+  return {
+    geradoEm: new Date().toISOString(),
+    time: { id: teamId, nome: teamInfo ? teamInfo.name : "", inviteCode: teamInfo ? teamInfo.inviteCode : "", ownerUid: teamInfo ? teamInfo.ownerUid : "" },
+    catalogo: { decks: catalog.decks || [], lojas: catalog.lojas || [] },
+    jogadores,
+  };
 }
 function subscribeVisiblePlayers(teamId, myUid, callback) {
   const { db, collection, query, where, onSnapshot } = window.__fb;
@@ -679,6 +726,13 @@ async function saveSideboards(uidStr, sideboards) {
   const ref = doc(db, "users", uidStr);
   await setDoc(ref, { sideboards }, { merge: true });
 }
+// Espelha campos do perfil pessoal dentro do doc que o admin do time já lê (allMatches),
+// pra ele conseguir gerar backup completo sem precisar de permissão extra pra ler users/{uid} alheio.
+async function syncProfileMirror(teamId, uidStr, patch) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "teams", teamId, "allMatches", uidStr);
+  await setDoc(ref, patch, { merge: true });
+}
 async function saveActiveTournament(uidStr, activeTournament) {
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
@@ -902,7 +956,7 @@ function TeamGate({ user, onSignOut, onTeamReady, existingTeams, onSelectExistin
     setError("");
     setLoading(true);
     try {
-      const { teamId, inviteCode } = await createTeam(user.uid, name);
+      const { teamId, inviteCode } = await createTeam(user.uid, name, user.displayName || user.email);
       onTeamReady({ teamId, name, inviteCode });
     } catch (e) {
       setError("Não consegui criar o time: " + (e && e.message ? e.message : "erro"));
@@ -916,7 +970,7 @@ function TeamGate({ user, onSignOut, onTeamReady, existingTeams, onSelectExistin
     setError("");
     setLoading(true);
     try {
-      const result = await joinTeamByCode(user.uid, code);
+      const result = await joinTeamByCode(user.uid, code, user.displayName || user.email);
       onTeamReady(result);
     } catch (e) {
       setError(e && e.message ? e.message : "Não consegui entrar no time.");
@@ -1051,6 +1105,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [reportRangeEnd, setReportRangeEnd] = useState("");
   const [adminData, setAdminData] = useState(null);
   const [adminLoading, setAdminLoading] = useState(false);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupError, setBackupError] = useState("");
   const [adminError, setAdminError] = useState("");
   const [adminMonthFilter, setAdminMonthFilter] = useState("__all__");
   const [adminPeriodMode, setAdminPeriodMode] = useState("todos"); // todos | mes | intervalo
@@ -1223,6 +1279,28 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   async function handleRemoveLoja(nome) {
     await persistLojas(data.lojas.filter((l) => l !== nome));
   }
+  async function handleBackupTeam() {
+    setBackupError("");
+    setBackupLoading(true);
+    try {
+      const backup = await loadTeamBackupData(team.teamId);
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const dataLabel = new Date().toISOString().slice(0, 10);
+      const safeName = (backup.time.nome || "time").replace(/[^a-zA-Z0-9\-_]+/g, "_");
+      a.href = url;
+      a.download = `backup-playbook-${safeName}-${dataLabel}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setBackupError("Não consegui gerar o backup: " + (e && e.message ? e.message : "erro desconhecido"));
+    } finally {
+      setBackupLoading(false);
+    }
+  }
   async function persistMatches(nextMatches) {
     try {
       await saveMatches(user.uid, nextMatches);
@@ -1235,6 +1313,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   async function persistActiveTournament(nextActiveTournament) {
     try {
       await saveActiveTournament(user.uid, nextActiveTournament);
+      syncProfileMirror(team.teamId, user.uid, { activeTournament: nextActiveTournament }).catch(() => {});
       return true;
     } catch (e) {
       setError("Não consegui atualizar o torneio: " + (e && e.message ? e.message : "erro desconhecido"));
@@ -1294,6 +1373,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     showActionToast(willBeOwned ? `★ ${name} adicionado aos favoritos!` : `${name} removido dos favoritos.`);
     try {
       await saveOwnedDecks(user.uid, next);
+      syncProfileMirror(team.teamId, user.uid, { ownedDecks: next }).catch(() => {});
     } catch (e) {
       setError("Não consegui salvar: " + (e && e.message ? e.message : "erro desconhecido"));
     }
@@ -1365,6 +1445,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     setSbEditingId(null);
     try {
       await saveSideboards(user.uid, next);
+      syncProfileMirror(team.teamId, user.uid, { sideboards: next }).catch(() => {});
     } catch (e) {
       setError("Não consegui salvar o sideboard: " + (e && e.message ? e.message : "erro"));
     }
@@ -1376,6 +1457,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     setSbSelected((prev) => prev.filter((s) => s !== id));
     try {
       await saveSideboards(user.uid, next);
+      syncProfileMirror(team.teamId, user.uid, { sideboards: next }).catch(() => {});
     } catch (e) {
       setError("Não consegui apagar: " + (e && e.message ? e.message : "erro"));
     }
@@ -3107,6 +3189,18 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
             <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Administração</div>
             <h2 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, margin: "4px 0 16px" }}>Estatísticas do time</h2>
+
+            <SectionLabel>Backup do time</SectionLabel>
+            <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: "#6E6656", marginBottom: 10 }}>
+                Baixa um arquivo com todos os dados do time: partidas de cada jogador, decks favoritos, planos de sideboard, catálogo de decks e lojas.
+              </div>
+              {backupError && <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 10 }}>{backupError}</div>}
+              <button onClick={handleBackupTeam} disabled={backupLoading} style={{
+                padding: "10px 16px", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8",
+                fontWeight: 700, cursor: backupLoading ? "default" : "pointer", opacity: backupLoading ? 0.6 : 1,
+              }}>{backupLoading ? "Gerando backup…" : "Baixar backup do time"}</button>
+            </div>
 
             <SectionLabel>Lojas do time</SectionLabel>
             <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
