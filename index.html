@@ -2390,7 +2390,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
             {sbFormato && sbDeck && (
               <>
-                <SectionLabel>Simulador de mão</SectionLabel>
+                <div style={{ marginTop: 16 }}>
+                  <SectionLabel>Simulador de mão</SectionLabel>
+                </div>
                 {!currentDeckList || dlEditing ? (
                   <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14, marginBottom: 16 }}>
                     <div style={{ fontSize: 13, color: "#6E6656", marginBottom: 8 }}>
