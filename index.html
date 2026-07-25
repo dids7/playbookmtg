@@ -427,6 +427,67 @@ function subscribeVisiblePlayers(teamId, myUid, callback) {
 }
 // Wilson Score (limite inferior, 95% de confiança) — usado pra ranquear justamente
 // levando em conta o tamanho da amostra, não só a porcentagem bruta de vitórias.
+function parseDecklistTxt(text) {
+  const lines = text.split(/\r?\n/);
+  const mainboard = [];
+  const sideboard = [];
+  let inSideboard = false;
+  const cardLineRe = /^(\d+)\s*x?\s+(.+)$/i;
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) return;
+    if (/^sideboard\b/i.test(line)) { inSideboard = true; return; }
+    if (/^deck(list)?\b/i.test(line) && !cardLineRe.test(line)) return;
+    if (line.startsWith("//") || line.startsWith("#")) return;
+    const match = line.match(cardLineRe);
+    if (!match) return;
+    const qty = parseInt(match[1], 10);
+    let name = match[2].trim().split(" (")[0].trim();
+    if (!qty || !name) return;
+    (inSideboard ? sideboard : mainboard).push({ name, qty });
+  });
+  return { mainboard, sideboard };
+}
+async function fetchCardImages(cardNames) {
+  const imageByName = {};
+  const notFound = [];
+  const chunks = [];
+  for (let i = 0; i < cardNames.length; i += 75) chunks.push(cardNames.slice(i, i + 75));
+  for (const chunk of chunks) {
+    try {
+      const res = await fetch("https://api.scryfall.com/cards/collection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifiers: chunk.map((name) => ({ name })) }),
+      });
+      const data = await res.json();
+      (data.data || []).forEach((card) => {
+        const img = card.image_uris ? card.image_uris.normal
+          : (card.card_faces && card.card_faces[0] && card.card_faces[0].image_uris ? card.card_faces[0].image_uris.normal : null);
+        if (img) imageByName[card.name.toLowerCase()] = img;
+      });
+      (data.not_found || []).forEach((nf) => notFound.push(nf.name));
+    } catch (e) {
+      chunk.forEach((name) => notFound.push(name));
+    }
+  }
+  return { imageByName, notFound };
+}
+function shuffleArray(arr) {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+function expandCardList(entries) {
+  const out = [];
+  entries.forEach((c) => {
+    for (let i = 0; i < c.qty; i++) out.push({ name: c.name, imageUrl: c.imageUrl || null });
+  });
+  return out;
+}
 function wilsonScore(wins, total) {
   if (total === 0) return 0;
   const p = wins / total;
@@ -707,9 +768,9 @@ async function loadUserData(uidStr) {
   const snap = await getDoc(ref);
   if (snap.exists()) {
     const d = snap.data();
-    return { matches: d.matches || [], ownedDecks: d.ownedDecks || [], sideboards: d.sideboards || [], activeTournament: d.activeTournament || null };
+    return { matches: d.matches || [], ownedDecks: d.ownedDecks || [], sideboards: d.sideboards || [], activeTournament: d.activeTournament || null, deckLists: d.deckLists || [] };
   }
-  return { matches: [], ownedDecks: [], sideboards: [], activeTournament: null };
+  return { matches: [], ownedDecks: [], sideboards: [], activeTournament: null, deckLists: [] };
 }
 async function saveMatches(uidStr, matches) {
   const { db, doc, setDoc } = window.__fb;
@@ -725,6 +786,11 @@ async function saveSideboards(uidStr, sideboards) {
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
   await setDoc(ref, { sideboards }, { merge: true });
+}
+async function saveDeckLists(uidStr, deckLists) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "users", uidStr);
+  await setDoc(ref, { deckLists }, { merge: true });
 }
 // Espelha campos do perfil pessoal dentro do doc que o admin do time já lê (allMatches),
 // pra ele conseguir gerar backup completo sem precisar de permissão extra pra ler users/{uid} alheio.
@@ -1098,6 +1164,14 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [sbForm, setSbForm] = useState(null);
   const [sbSelected, setSbSelected] = useState([]);
   const [sbError, setSbError] = useState("");
+  const [deckLists, setDeckLists] = useState([]);
+  const [dlImportText, setDlImportText] = useState("");
+  const [dlImporting, setDlImporting] = useState(false);
+  const [dlError, setDlError] = useState("");
+  const [dlEditing, setDlEditing] = useState(false);
+  const [handMode, setHandMode] = useState("g1"); // g1 | g2
+  const [handOponente, setHandOponente] = useState("");
+  const [handState, setHandState] = useState(null); // { pool: [], hand: [], extraDrawn: 0 }
   const [reportMonth, setReportMonth] = useState("");
   const [reportMode, setReportMode] = useState("mes"); // mes | intervalo
   const [reportDeck, setReportDeck] = useState("__all__");
@@ -1200,6 +1274,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         setData((prev) => ({ ...prev, matches: userData.matches, activeTournament: userData.activeTournament }));
         setOwnedDecks(userData.ownedDecks);
         setSideboards(userData.sideboards);
+        setDeckLists(userData.deckLists);
       } catch (e) {
         setError("Não consegui carregar suas partidas: " + (e && e.message ? e.message : "erro"));
       } finally {
@@ -1463,6 +1538,77 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     }
   }
 
+  async function handleImportDeckList() {
+    setDlError("");
+    if (!dlImportText.trim()) { setDlError("Cola a lista do deck primeiro."); return; }
+    const parsed = parseDecklistTxt(dlImportText);
+    if (parsed.mainboard.length === 0) {
+      setDlError("Não consegui reconhecer nenhuma carta nessa lista. Confere o formato (ex: \"4 Lightning Bolt\").");
+      return;
+    }
+    setDlImporting(true);
+    try {
+      const allNames = Array.from(new Set([...parsed.mainboard, ...parsed.sideboard].map((c) => c.name)));
+      const { imageByName, notFound } = await fetchCardImages(allNames);
+      const withImages = (list) => list.map((c) => ({ ...c, imageUrl: imageByName[c.name.toLowerCase()] || null }));
+      const entry = {
+        id: uid(), formato: sbFormato, deck: sbDeck, updatedAt: Date.now(),
+        mainboard: withImages(parsed.mainboard), sideboardCards: withImages(parsed.sideboard), notFound,
+      };
+      const next = [...deckLists.filter((d) => !(d.formato === sbFormato && d.deck === sbDeck)), entry];
+      await saveDeckLists(user.uid, next);
+      syncProfileMirror(team.teamId, user.uid, { deckLists: next }).catch(() => {});
+      setDeckLists(next);
+      setDlImportText("");
+      setDlEditing(false);
+      setHandState(null);
+    } catch (e) {
+      setDlError("Não consegui importar: " + (e && e.message ? e.message : "erro desconhecido"));
+    } finally {
+      setDlImporting(false);
+    }
+  }
+
+  function buildDeckPool(deckList, mode, oponenteName) {
+    let main = deckList.mainboard.map((c) => ({ ...c }));
+    if (mode === "g2" && oponenteName) {
+      const sbEntry = sideboards.find((s) => s.formato === deckList.formato && s.deck === deckList.deck && s.oponente === oponenteName);
+      if (sbEntry) {
+        sbEntry.tirar.forEach((t) => {
+          let toRemove = t.qtd;
+          main = main.map((c) => {
+            if (toRemove > 0 && c.name.toLowerCase() === t.carta.trim().toLowerCase() && c.qty > 0) {
+              const remove = Math.min(toRemove, c.qty);
+              toRemove -= remove;
+              return { ...c, qty: c.qty - remove };
+            }
+            return c;
+          }).filter((c) => c.qty > 0);
+        });
+        sbEntry.colocar.forEach((cIn) => {
+          const fromSb = deckList.sideboardCards.find((s) => s.name.toLowerCase() === cIn.carta.trim().toLowerCase());
+          const fromMain = deckList.mainboard.find((s) => s.name.toLowerCase() === cIn.carta.trim().toLowerCase());
+          const imageUrl = fromSb ? fromSb.imageUrl : (fromMain ? fromMain.imageUrl : null);
+          main.push({ name: cIn.carta.trim(), qty: cIn.qtd, imageUrl });
+        });
+      }
+    }
+    return expandCardList(main);
+  }
+
+  function handleNovaMao(deckList) {
+    const pool = shuffleArray(buildDeckPool(deckList, handMode, handOponente));
+    setHandState({ hand: pool.slice(0, 7), pool: pool.slice(7), extraDrawn: 0 });
+  }
+
+  function handleComprarCarta() {
+    setHandState((prev) => {
+      if (!prev || prev.extraDrawn >= 7 || prev.pool.length === 0) return prev;
+      const [next, ...rest] = prev.pool;
+      return { hand: [...prev.hand, next], pool: rest, extraDrawn: prev.extraDrawn + 1 };
+    });
+  }
+
   function toggleSbSelected(id) {
     setSbSelected((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
   }
@@ -1717,6 +1863,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       .filter((s) => s.formato === sbFormato && s.deck === sbDeck)
       .sort((a, b) => a.oponente.localeCompare(b.oponente));
   }, [sideboards, sbFormato, sbDeck]);
+  const currentDeckList = useMemo(() => {
+    return deckLists.find((d) => d.formato === sbFormato && d.deck === sbDeck) || null;
+  }, [deckLists, sbFormato, sbDeck]);
   const sbPlanForRegistro = useMemo(() => {
     if (!form.formato || !form.meuDeck || !form.oponenteDeck) return null;
     return sideboards.find((s) => s.formato === form.formato && s.deck === form.meuDeck && s.oponente === form.oponenteDeck) || null;
@@ -2192,12 +2341,106 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   {sbMyDeckOptions.length === 0 ? (
                     <div style={{ fontSize: 13, color: "#8A3F35" }}>Marca algum deck como seu na aba "Decks" primeiro.</div>
                   ) : (
-                    <select value={sbDeck} onChange={(e) => { setSbDeck(e.target.value); setSbForm(null); setSbSelected([]); }} style={inputStyle}>
+                    <select value={sbDeck} onChange={(e) => { setSbDeck(e.target.value); setSbForm(null); setSbSelected([]); setHandState(null); setHandMode("g1"); setHandOponente(""); setDlEditing(false); }} style={inputStyle}>
                       <option value="">Selecione um deck</option>
                       {sbMyDeckOptions.map((d) => <option key={d} value={d}>{d}</option>)}
                     </select>
                   )}
                 </Field>
+              </>
+            )}
+
+            {sbFormato && sbDeck && (
+              <>
+                <SectionLabel>Simulador de mão</SectionLabel>
+                {!currentDeckList || dlEditing ? (
+                  <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14, marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, color: "#6E6656", marginBottom: 8 }}>
+                      Cola aqui a lista do deck (formato .txt, tipo o que a Liga Magic exporta).
+                    </div>
+                    <textarea value={dlImportText} onChange={(e) => setDlImportText(e.target.value)}
+                      rows={6} placeholder={"4 Slippery Bogle\n4 Rancor\n...\n\nSideboard\n2 Rest for the Weary"}
+                      style={{ ...inputStyle, width: "100%", fontFamily: "monospace", fontSize: 12, resize: "vertical" }} />
+                    {dlError && <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "8px 10px", fontSize: 12, marginTop: 8 }}>{dlError}</div>}
+                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                      <button onClick={handleImportDeckList} disabled={dlImporting} style={{
+                        flex: 1, padding: "9px 0", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8",
+                        fontWeight: 700, fontSize: 13, cursor: dlImporting ? "default" : "pointer", opacity: dlImporting ? 0.6 : 1,
+                      }}>{dlImporting ? "Importando…" : "Importar lista"}</button>
+                      {currentDeckList && (
+                        <button onClick={() => { setDlEditing(false); setDlImportText(""); setDlError(""); }} style={{
+                          padding: "9px 14px", borderRadius: 6, border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", fontWeight: 700, fontSize: 13, cursor: "pointer",
+                        }}>Cancelar</button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{sbDeck} importado</div>
+                        <div style={{ fontSize: 11, color: "#6E6656", marginTop: 2 }}>
+                          {currentDeckList.mainboard.reduce((s, c) => s + c.qty, 0)} cartas maindeck
+                          {currentDeckList.sideboardCards.length > 0 && ` + ${currentDeckList.sideboardCards.reduce((s, c) => s + c.qty, 0)} sideboard`}
+                          {currentDeckList.notFound && currentDeckList.notFound.length > 0 && ` · ${currentDeckList.notFound.length} não encontrada(s)`}
+                        </div>
+                      </div>
+                      <button onClick={() => setDlEditing(true)} style={{ border: "1px solid #B15C3E", color: "#B15C3E", background: "transparent", borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Atualizar</button>
+                    </div>
+
+                    {sbEntriesForDeck.length > 0 && (
+                      <Field label="Contra qual deck?">
+                        <select value={handOponente} onChange={(e) => { setHandOponente(e.target.value); setHandState(null); if (!e.target.value) setHandMode("g1"); }} style={inputStyle}>
+                          <option value="">Nenhum (só embaralhar o maindeck)</option>
+                          {sbEntriesForDeck.map((s) => <option key={s.id} value={s.oponente}>{s.oponente}</option>)}
+                        </select>
+                      </Field>
+                    )}
+
+                    <div style={{ display: "flex", gap: 6, margin: "10px 0" }}>
+                      <button onClick={() => { setHandMode("g1"); setHandState(null); }} style={{
+                        flex: 1, border: "none", borderRadius: 6, padding: "8px 0", fontSize: 12, fontWeight: 700,
+                        background: handMode === "g1" ? "#2A2621" : "#F6F1E1", color: handMode === "g1" ? "#EFE9D8" : "#6E6656",
+                      }}>Jogo 1</button>
+                      <button onClick={() => { if (handOponente) { setHandMode("g2"); setHandState(null); } }} style={{
+                        flex: 1, border: handMode === "g2" ? "none" : "1px solid #C9C0A6", borderRadius: 6, padding: "8px 0", fontSize: 12, fontWeight: 700,
+                        background: handMode === "g2" ? "#2A2621" : "#F6F1E1", color: handMode === "g2" ? "#EFE9D8" : "#6E6656",
+                        opacity: handOponente ? 1 : 0.5, cursor: handOponente ? "pointer" : "default",
+                      }}>Jogo 2</button>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+                      <button onClick={() => handleNovaMao(currentDeckList)} style={{ flex: 1, border: "none", borderRadius: 6, padding: "9px 0", fontSize: 12, fontWeight: 700, background: "#B15C3E", color: "#EFE9D8" }}>Nova mão</button>
+                      <button onClick={handleComprarCarta} disabled={!handState || handState.extraDrawn >= 7 || handState.pool.length === 0} style={{
+                        flex: 1, border: "1px solid #C9C0A6", borderRadius: 6, padding: "9px 0", fontSize: 12, fontWeight: 700, background: "#F6F1E1", color: "#2A2621",
+                        opacity: (!handState || handState.extraDrawn >= 7 || handState.pool.length === 0) ? 0.5 : 1,
+                      }}>Comprar</button>
+                      <button onClick={() => handleNovaMao(currentDeckList)} style={{ flex: 1, border: "1px solid #C9C0A6", borderRadius: 6, padding: "9px 0", fontSize: 12, fontWeight: 700, background: "#F6F1E1", color: "#2A2621" }}>Mulligan</button>
+                    </div>
+
+                    {handState && (
+                      <>
+                        <div style={{ fontSize: 11, color: "#6E6656", marginBottom: 8 }}>Mão ({handState.hand.length} carta{handState.hand.length !== 1 ? "s" : ""})</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                          {handState.hand.map((c, i) => (
+                            <div key={i} style={{ background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8, overflow: "hidden" }}>
+                              {c.imageUrl ? (
+                                <img src={c.imageUrl} alt={c.name} style={{ width: "100%", display: "block" }} />
+                              ) : (
+                                <div style={{ aspectRatio: "63/88", background: "#DCD3B8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#8A8270", textAlign: "center", padding: 4 }}>{c.name}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        {handState.extraDrawn > 0 && (
+                          <div style={{ textAlign: "center", fontSize: 11, color: "#8A8270", marginTop: 8 }}>
+                            {handState.extraDrawn} carta{handState.extraDrawn !== 1 ? "s" : ""} comprada{handState.extraDrawn !== 1 ? "s" : ""} depois da mão inicial
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
