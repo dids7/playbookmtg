@@ -428,23 +428,50 @@ function subscribeVisiblePlayers(teamId, myUid, callback) {
 // Wilson Score (limite inferior, 95% de confiança) — usado pra ranquear justamente
 // levando em conta o tamanho da amostra, não só a porcentagem bruta de vitórias.
 function parseDecklistTxt(text) {
-  const lines = text.split(/\r?\n/);
+  const rawLines = text.split(/\r?\n/);
   const mainboard = [];
   const sideboard = [];
   let inSideboard = false;
+  let sawExplicitMarker = false;
   const cardLineRe = /^(\d+)\s*x?\s+(.+)$/i;
-  lines.forEach((rawLine) => {
+  const sbPrefixRe = /^SB:?\s*(\d+)\s*x?\s+(.+)$/i;
+
+  // Descobre se existe um bloco de linhas em branco separando maindeck de sideboard,
+  // pra usar como fallback quando não houver marcador explícito ("Sideboard" ou "SB:").
+  let lastBlankBeforeCards = -1;
+  rawLines.forEach((rawLine, i) => {
+    const line = rawLine.trim();
+    if (!line && i > 0 && i < rawLines.length - 1) {
+      const hasMoreCardsAfter = rawLines.slice(i + 1).some((l) => cardLineRe.test(l.trim()));
+      const hadCardsBefore = rawLines.slice(0, i).some((l) => cardLineRe.test(l.trim()));
+      if (hasMoreCardsAfter && hadCardsBefore) lastBlankBeforeCards = i;
+    }
+  });
+
+  rawLines.forEach((rawLine, i) => {
     const line = rawLine.trim();
     if (!line) return;
-    if (/^sideboard\b/i.test(line)) { inSideboard = true; return; }
+    if (/^sideboard\b/i.test(line)) { inSideboard = true; sawExplicitMarker = true; return; }
     if (/^deck(list)?\b/i.test(line) && !cardLineRe.test(line)) return;
     if (line.startsWith("//") || line.startsWith("#")) return;
+
+    const sbMatch = line.match(sbPrefixRe);
+    if (sbMatch) {
+      sawExplicitMarker = true;
+      const qty = parseInt(sbMatch[1], 10);
+      const name = sbMatch[2].trim().split(" (")[0].trim();
+      if (qty && name) sideboard.push({ name, qty });
+      return;
+    }
+
     const match = line.match(cardLineRe);
     if (!match) return;
     const qty = parseInt(match[1], 10);
     let name = match[2].trim().split(" (")[0].trim();
     if (!qty || !name) return;
-    (inSideboard ? sideboard : mainboard).push({ name, qty });
+
+    const goesToSideboard = inSideboard || (!sawExplicitMarker && lastBlankBeforeCards !== -1 && i > lastBlankBeforeCards);
+    (goesToSideboard ? sideboard : mainboard).push({ name, qty });
   });
   return { mainboard, sideboard };
 }
@@ -1538,10 +1565,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     }
   }
 
-  async function handleImportDeckList() {
+  async function handleImportDeckList(textOverride) {
     setDlError("");
-    if (!dlImportText.trim()) { setDlError("Cola a lista do deck primeiro."); return; }
-    const parsed = parseDecklistTxt(dlImportText);
+    const source = typeof textOverride === "string" ? textOverride : dlImportText;
+    if (!source.trim()) { setDlError("Cola a lista do deck ou escolhe um arquivo .txt primeiro."); return; }
+    const parsed = parseDecklistTxt(source);
     if (parsed.mainboard.length === 0) {
       setDlError("Não consegui reconhecer nenhuma carta nessa lista. Confere o formato (ex: \"4 Lightning Bolt\").");
       return;
@@ -1599,6 +1627,16 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   function handleNovaMao(deckList) {
     const pool = shuffleArray(buildDeckPool(deckList, handMode, handOponente));
     setHandState({ hand: pool.slice(0, 7), pool: pool.slice(7), extraDrawn: 0 });
+  }
+
+  function handleDeckFileSelected(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { handleImportDeckList(String(reader.result || "")); };
+    reader.onerror = () => setDlError("Não consegui ler esse arquivo.");
+    reader.readAsText(file);
   }
 
   function handleComprarCarta() {
@@ -2356,8 +2394,16 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 {!currentDeckList || dlEditing ? (
                   <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14, marginBottom: 16 }}>
                     <div style={{ fontSize: 13, color: "#6E6656", marginBottom: 8 }}>
-                      Cola aqui a lista do deck (formato .txt, tipo o que a Liga Magic exporta).
+                      Importa o arquivo .txt do deck (o mesmo formato que a Liga Magic exporta), ou cola o texto abaixo.
                     </div>
+                    <label style={{
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 0", borderRadius: 6,
+                      border: "1px dashed #B15C3E", color: "#B15C3E", fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 10,
+                    }}>
+                      Selecionar arquivo .txt
+                      <input type="file" accept=".txt,text/plain" onChange={handleDeckFileSelected} style={{ display: "none" }} />
+                    </label>
+                    <div style={{ fontSize: 11, color: "#8A8270", textAlign: "center", marginBottom: 10 }}>ou cole o texto</div>
                     <textarea value={dlImportText} onChange={(e) => setDlImportText(e.target.value)}
                       rows={6} placeholder={"4 Slippery Bogle\n4 Rancor\n...\n\nSideboard\n2 Rest for the Weary"}
                       style={{ ...inputStyle, width: "100%", fontFamily: "monospace", fontSize: 12, resize: "vertical" }} />
@@ -2366,7 +2412,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       <button onClick={handleImportDeckList} disabled={dlImporting} style={{
                         flex: 1, padding: "9px 0", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8",
                         fontWeight: 700, fontSize: 13, cursor: dlImporting ? "default" : "pointer", opacity: dlImporting ? 0.6 : 1,
-                      }}>{dlImporting ? "Importando…" : "Importar lista"}</button>
+                      }}>{dlImporting ? "Importando…" : "Importar texto colado"}</button>
                       {currentDeckList && (
                         <button onClick={() => { setDlEditing(false); setDlImportText(""); setDlError(""); }} style={{
                           padding: "9px 14px", borderRadius: 6, border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", fontWeight: 700, fontSize: 13, cursor: "pointer",
@@ -2388,14 +2434,16 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       <button onClick={() => setDlEditing(true)} style={{ border: "1px solid #B15C3E", color: "#B15C3E", background: "transparent", borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Atualizar</button>
                     </div>
 
-                    {sbEntriesForDeck.length > 0 && (
-                      <Field label="Contra qual deck?">
+                    <Field label="Contra qual deck?">
+                      {sbEntriesForDeck.length === 0 ? (
+                        <div style={{ fontSize: 12, color: "#8A8270" }}>Cadastra um matchup abaixo pra poder simular o Jogo 2 contra ele.</div>
+                      ) : (
                         <select value={handOponente} onChange={(e) => { setHandOponente(e.target.value); setHandState(null); if (!e.target.value) setHandMode("g1"); }} style={inputStyle}>
                           <option value="">Nenhum (só embaralhar o maindeck)</option>
                           {sbEntriesForDeck.map((s) => <option key={s.id} value={s.oponente}>{s.oponente}</option>)}
                         </select>
-                      </Field>
-                    )}
+                      )}
+                    </Field>
 
                     <div style={{ display: "flex", gap: 6, margin: "10px 0" }}>
                       <button onClick={() => { setHandMode("g1"); setHandState(null); }} style={{
