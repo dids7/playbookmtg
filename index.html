@@ -1191,6 +1191,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [sbForm, setSbForm] = useState(null);
   const [sbSelected, setSbSelected] = useState([]);
   const [sbError, setSbError] = useState("");
+  const [sbSubTab, setSbSubTab] = useState("matchup"); // matchup | mao
   const [deckLists, setDeckLists] = useState([]);
   const [dlImportText, setDlImportText] = useState("");
   const [dlImporting, setDlImporting] = useState(false);
@@ -2379,7 +2380,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   {sbMyDeckOptions.length === 0 ? (
                     <div style={{ fontSize: 13, color: "#8A3F35" }}>Marca algum deck como seu na aba "Decks" primeiro.</div>
                   ) : (
-                    <select value={sbDeck} onChange={(e) => { setSbDeck(e.target.value); setSbForm(null); setSbSelected([]); setHandState(null); setHandMode("g1"); setHandOponente(""); setDlEditing(false); }} style={inputStyle}>
+                    <select value={sbDeck} onChange={(e) => { setSbDeck(e.target.value); setSbForm(null); setSbSelected([]); setHandState(null); setHandMode("g1"); setHandOponente(""); setDlEditing(false); setSbSubTab("matchup"); }} style={inputStyle}>
                       <option value="">Selecione um deck</option>
                       {sbMyDeckOptions.map((d) => <option key={d} value={d}>{d}</option>)}
                     </select>
@@ -2389,6 +2390,21 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             )}
 
             {sbFormato && sbDeck && (
+              <>
+                <div style={{ display: "flex", gap: 6, marginTop: 16, marginBottom: 4 }}>
+                  <button onClick={() => setSbSubTab("matchup")} style={{
+                    flex: 1, border: "none", borderRadius: 6, padding: "9px 0", fontSize: 13, fontWeight: 700,
+                    background: sbSubTab === "matchup" ? "#2A2621" : "#F6F1E1", color: sbSubTab === "matchup" ? "#EFE9D8" : "#6E6656", cursor: "pointer",
+                  }}>Matchup</button>
+                  <button onClick={() => setSbSubTab("mao")} style={{
+                    flex: 1, border: "none", borderRadius: 6, padding: "9px 0", fontSize: 13, fontWeight: 700,
+                    background: sbSubTab === "mao" ? "#2A2621" : "#F6F1E1", color: sbSubTab === "mao" ? "#EFE9D8" : "#6E6656", cursor: "pointer",
+                  }}>Mão Inicial</button>
+                </div>
+              </>
+            )}
+
+            {sbFormato && sbDeck && sbSubTab === "mao" && (
               <>
                 <div style={{ marginTop: 16 }}>
                   <SectionLabel>Simulador de mão</SectionLabel>
@@ -2467,12 +2483,34 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       }}>Comprar</button>
                       <button onClick={() => handleNovaMao(currentDeckList)} style={{ flex: 1, border: "1px solid #C9C0A6", borderRadius: 6, padding: "9px 0", fontSize: 12, fontWeight: 700, background: "#F6F1E1", color: "#2A2621" }}>Mulligan</button>
                     </div>
+
+                    {handState && (
+                      <>
+                        <div style={{ fontSize: 11, color: "#6E6656", marginBottom: 8 }}>Mão ({handState.hand.length} carta{handState.hand.length !== 1 ? "s" : ""})</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                          {handState.hand.map((c, i) => (
+                            <div key={i} style={{ background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8, overflow: "hidden" }}>
+                              {c.imageUrl ? (
+                                <img src={c.imageUrl} alt={c.name} style={{ width: "100%", display: "block" }} />
+                              ) : (
+                                <div style={{ aspectRatio: "63/88", background: "#DCD3B8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#8A8270", textAlign: "center", padding: 4 }}>{c.name}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        {handState.extraDrawn > 0 && (
+                          <div style={{ textAlign: "center", fontSize: 11, color: "#8A8270", marginTop: 8 }}>
+                            {handState.extraDrawn} carta{handState.extraDrawn !== 1 ? "s" : ""} comprada{handState.extraDrawn !== 1 ? "s" : ""} depois da mão inicial
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
               </>
             )}
 
-            {sbFormato && sbDeck && (
+            {sbFormato && sbDeck && sbSubTab === "matchup" && (
               <>
                 <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <SectionLabel>Matchups de {sbDeck} ({sbEntriesForDeck.length})</SectionLabel>
@@ -2566,28 +2604,6 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   </button>
                 )}
               </>
-            )}
-
-            {sbFormato && sbDeck && handState && (
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 11, color: "#6E6656", marginBottom: 8 }}>Mão ({handState.hand.length} carta{handState.hand.length !== 1 ? "s" : ""})</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-                  {handState.hand.map((c, i) => (
-                    <div key={i} style={{ background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8, overflow: "hidden" }}>
-                      {c.imageUrl ? (
-                        <img src={c.imageUrl} alt={c.name} style={{ width: "100%", display: "block" }} />
-                      ) : (
-                        <div style={{ aspectRatio: "63/88", background: "#DCD3B8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#8A8270", textAlign: "center", padding: 4 }}>{c.name}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                {handState.extraDrawn > 0 && (
-                  <div style={{ textAlign: "center", fontSize: 11, color: "#8A8270", marginTop: 8 }}>
-                    {handState.extraDrawn} carta{handState.extraDrawn !== 1 ? "s" : ""} comprada{handState.extraDrawn !== 1 ? "s" : ""} depois da mão inicial
-                  </div>
-                )}
-              </div>
             )}
           </div>
         )}
