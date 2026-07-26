@@ -82,7 +82,7 @@
     getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
   const {
-    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion
+    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion, deleteDoc
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
   const firebaseConfig = {
@@ -99,7 +99,7 @@
     auth: getAuth(app),
     provider: new GoogleAuthProvider(),
     db: getFirestore(app),
-    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion,
+    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion, deleteDoc,
   };
   window.__fbReady = true;
   window.dispatchEvent(new Event("firebase-ready"));
@@ -364,6 +364,75 @@ async function loadAllTeamMatches(teamId) {
     list.push({ uid: docSnap.id, displayName: d.displayName || "Jogador", matches: d.matches || [] });
   });
   return list;
+}
+function subscribePosts(teamId, callback) {
+  const { db, collection, onSnapshot } = window.__fb;
+  const ref = collection(db, "teams", teamId, "posts");
+  return onSnapshot(ref, (snap) => {
+    const list = [];
+    snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    callback(list);
+  }, (err) => { console.error("Erro ao sincronizar mural:", err); });
+}
+async function createPost(teamId, post) {
+  const { db, doc, collection, setDoc } = window.__fb;
+  const ref = doc(collection(db, "teams", teamId, "posts"));
+  const now = Date.now();
+  await setDoc(ref, { ...post, editoresPermitidos: [], createdAt: now, updatedAt: now });
+  return ref.id;
+}
+async function updatePost(teamId, postId, patch) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "teams", teamId, "posts", postId);
+  await setDoc(ref, { ...patch, updatedAt: Date.now() }, { merge: true });
+}
+async function deletePost(teamId, postId) {
+  const { db, doc, deleteDoc } = window.__fb;
+  await deleteDoc(doc(db, "teams", teamId, "posts", postId));
+}
+async function fetchTeamMembers(teamId) {
+  const { db, collection, getDocs } = window.__fb;
+  const snap = await getDocs(collection(db, "teams", teamId, "members"));
+  const list = [];
+  snap.forEach((d) => list.push({ uid: d.id, displayName: (d.data() || {}).displayName || "Jogador" }));
+  return list;
+}
+function escapeHtml(str) {
+  return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function renderSimpleMarkdown(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const htmlParts = [];
+  let listBuffer = [];
+  function flushList() {
+    if (listBuffer.length) {
+      htmlParts.push('<ul style="margin:4px 0 8px 18px;padding:0;">' + listBuffer.map((li) => `<li>${li}</li>`).join("") + "</ul>");
+      listBuffer = [];
+    }
+  }
+  lines.forEach((raw) => {
+    let line = escapeHtml(raw);
+    line = line.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    line = line.replace(/\*(.+?)\*/g, "<em>$1</em>");
+    if (/^#{1,3}\s+/.test(line)) {
+      flushList();
+      const level = line.match(/^#{1,3}/)[0].length;
+      const content = line.replace(/^#{1,3}\s+/, "");
+      const size = level === 1 ? 18 : level === 2 ? 16 : 14;
+      htmlParts.push(`<div style="font-weight:700;font-size:${size}px;margin:8px 0 4px;">${content}</div>`);
+    } else if (/^-\s+/.test(line)) {
+      listBuffer.push(line.replace(/^-\s+/, ""));
+    } else if (line.trim() === "") {
+      flushList();
+      htmlParts.push('<div style="height:6px;"></div>');
+    } else {
+      flushList();
+      htmlParts.push(`<div style="margin:2px 0;">${line}</div>`);
+    }
+  });
+  flushList();
+  return htmlParts.join("");
 }
 async function loadTeamBackupData(teamId) {
   const { db, doc, getDoc, collection, getDocs } = window.__fb;
@@ -1184,6 +1253,15 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [visible, setVisible] = useState(false);
   const [teamPlayers, setTeamPlayers] = useState([]);
   const [selectedPlayerUid, setSelectedPlayerUid] = useState(null);
+  const [jogadoresSubTab, setJogadoresSubTab] = useState("jogadores"); // jogadores | mural
+  const [posts, setPosts] = useState([]);
+  const [teamMembersList, setTeamMembersList] = useState([]);
+  const [postForm, setPostForm] = useState(null); // null = fechado
+  const [postEditingId, setPostEditingId] = useState(null);
+  const [postError, setPostError] = useState("");
+  const [postSaving, setPostSaving] = useState(false);
+  const [postSharingId, setPostSharingId] = useState(null); // post com o painel "liberar edição" aberto
+  const [confirmDeletePostId, setConfirmDeletePostId] = useState(null);
   const [sideboards, setSideboards] = useState([]);
   const [sbFormato, setSbFormato] = useState("");
   const [sbDeck, setSbDeck] = useState("");
@@ -1315,6 +1393,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   }, [user.uid]);
 
   useEffect(() => {
+    const unsubscribe = subscribePosts(team.teamId, (list) => setPosts(list));
+    fetchTeamMembers(team.teamId).then(setTeamMembersList).catch(() => {});
+    return () => unsubscribe();
+  }, [team.teamId]);
+
+  useEffect(() => {
     (async () => {
       try {
         const v = await loadOwnVisibility(team.teamId, user.uid);
@@ -1382,6 +1466,66 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   async function handleRemoveLoja(nome) {
     await persistLojas(data.lojas.filter((l) => l !== nome));
   }
+
+  function openNewPostForm(tipo) {
+    setPostForm({ tipo, titulo: "", link: "", conteudo: "" });
+    setPostEditingId(null);
+    setPostError("");
+  }
+  function openEditPostForm(post) {
+    setPostForm({ tipo: post.tipo, titulo: post.titulo, link: post.link || "", conteudo: post.conteudo || "" });
+    setPostEditingId(post.id);
+    setPostError("");
+  }
+  async function handleSavePost() {
+    setPostError("");
+    if (!postForm.titulo.trim()) { setPostError("Escreve um título."); return; }
+    if (postForm.tipo === "artigo" && !postForm.link.trim()) { setPostError("Cola o link do artigo/vídeo."); return; }
+    if (postForm.tipo === "anotacao" && !postForm.conteudo.trim()) { setPostError("Escreve o conteúdo da anotação."); return; }
+    setPostSaving(true);
+    try {
+      if (postEditingId) {
+        await updatePost(team.teamId, postEditingId, {
+          titulo: postForm.titulo.trim(), link: postForm.link.trim(), conteudo: postForm.conteudo,
+        });
+      } else {
+        await createPost(team.teamId, {
+          tipo: postForm.tipo, titulo: postForm.titulo.trim(), link: postForm.link.trim(), conteudo: postForm.conteudo,
+          autorUid: user.uid, autorNome: user.displayName || user.email,
+        });
+      }
+      setPostForm(null);
+      setPostEditingId(null);
+    } catch (e) {
+      setPostError("Não consegui salvar: " + (e && e.message ? e.message : "erro desconhecido"));
+    } finally {
+      setPostSaving(false);
+    }
+  }
+  async function handleDeletePost(postId) {
+    setConfirmDeletePostId(null);
+    try {
+      await deletePost(team.teamId, postId);
+    } catch (e) {
+      setError("Não consegui apagar o post: " + (e && e.message ? e.message : "erro"));
+    }
+  }
+  async function handleToggleEditor(post, memberUid) {
+    const current = post.editoresPermitidos || [];
+    const next = current.includes(memberUid) ? current.filter((u) => u !== memberUid) : [...current, memberUid];
+    try {
+      await updatePost(team.teamId, post.id, { editoresPermitidos: next });
+    } catch (e) {
+      setError("Não consegui atualizar a permissão: " + (e && e.message ? e.message : "erro"));
+    }
+  }
+  function canEditPost(post) {
+    return post.autorUid === user.uid || (post.editoresPermitidos || []).includes(user.uid) || isTeamOwner;
+  }
+  function canDeletePost(post) {
+    return post.autorUid === user.uid || isTeamOwner;
+  }
+
   async function handleBackupTeam() {
     setBackupError("");
     setBackupLoading(true);
@@ -2919,6 +3063,19 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
         {!loading && screen === "jogadores" && (
           <div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+              <button onClick={() => setJogadoresSubTab("jogadores")} style={{
+                flex: 1, border: "none", borderRadius: 6, padding: "9px 0", fontSize: 13, fontWeight: 700,
+                background: jogadoresSubTab === "jogadores" ? "#2A2621" : "#F6F1E1", color: jogadoresSubTab === "jogadores" ? "#EFE9D8" : "#6E6656", cursor: "pointer",
+              }}>Jogadores</button>
+              <button onClick={() => setJogadoresSubTab("mural")} style={{
+                flex: 1, border: "none", borderRadius: 6, padding: "9px 0", fontSize: 13, fontWeight: 700,
+                background: jogadoresSubTab === "mural" ? "#2A2621" : "#F6F1E1", color: jogadoresSubTab === "mural" ? "#EFE9D8" : "#6E6656", cursor: "pointer",
+              }}>Mural</button>
+            </div>
+
+            {jogadoresSubTab === "jogadores" && (
+              <>
             <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "14px", marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
               <div>
                 <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>Compartilhar minhas estatísticas</div>
@@ -2939,6 +3096,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 }} />
               </button>
             </div>
+
 
             {contributingCount > 0 && (
               <>
@@ -3022,6 +3180,114 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   );
                 })}
               </div>
+            )}
+              </>
+            )}
+
+            {jogadoresSubTab === "mural" && (
+              <>
+                <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                  <button onClick={() => openNewPostForm("artigo")} style={{ flex: 1, border: "none", background: "#2A2621", color: "#EFE9D8", borderRadius: 6, padding: "9px 0", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Artigo/Vídeo</button>
+                  <button onClick={() => openNewPostForm("anotacao")} style={{ flex: 1, border: "none", background: "#B15C3E", color: "#EFE9D8", borderRadius: 6, padding: "9px 0", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Anotação</button>
+                </div>
+
+                {postForm && (
+                  <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14, marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                      {postEditingId ? "Editar" : "Novo"} {postForm.tipo === "artigo" ? "artigo/vídeo" : "anotação"}
+                    </div>
+                    <Field label="Título">
+                      <input value={postForm.titulo} onChange={(e) => setPostForm((f) => ({ ...f, titulo: e.target.value }))} style={inputStyle} placeholder="Título do post" />
+                    </Field>
+                    {postForm.tipo === "artigo" ? (
+                      <Field label="Link">
+                        <input value={postForm.link} onChange={(e) => setPostForm((f) => ({ ...f, link: e.target.value }))} style={inputStyle} placeholder="https://..." />
+                      </Field>
+                    ) : (
+                      <Field label="Conteúdo (aceita **negrito**, *itálico*, # título, - lista)">
+                        <textarea value={postForm.conteudo} onChange={(e) => setPostForm((f) => ({ ...f, conteudo: e.target.value }))}
+                          rows={6} style={{ ...inputStyle, width: "100%", resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
+                          placeholder={"# Contra Mono Red\n\nEsse matchup é **difícil** no jogo 1.\n- Guardar remoção pros criaturas pequenas\n- Sideboard: +2 Prismatic Strands"} />
+                      </Field>
+                    )}
+                    {postForm.conteudo && postForm.tipo === "anotacao" && (
+                      <div style={{ background: "#EFE9D8", borderRadius: 6, padding: 10, fontSize: 13, marginBottom: 10 }}
+                        dangerouslySetInnerHTML={{ __html: renderSimpleMarkdown(postForm.conteudo) }} />
+                    )}
+                    {postError && <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "8px 10px", fontSize: 12, marginBottom: 10 }}>{postError}</div>}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={handleSavePost} disabled={postSaving} style={{ flex: 1, padding: "9px 0", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 13, cursor: postSaving ? "default" : "pointer", opacity: postSaving ? 0.6 : 1 }}>
+                        {postSaving ? "Salvando…" : "Salvar"}
+                      </button>
+                      <button onClick={() => { setPostForm(null); setPostEditingId(null); }} style={{ padding: "9px 14px", borderRadius: 6, border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                    </div>
+                  </div>
+                )}
+
+                {posts.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhum post ainda. Compartilha um artigo, vídeo ou anotação pro time.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {posts.map((post) => (
+                      <div key={post.id} style={{ background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                          <div>
+                            <span style={{
+                              fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
+                              color: post.tipo === "artigo" ? "#B15C3E" : "#4B6B4E",
+                            }}>{post.tipo === "artigo" ? "Artigo/Vídeo" : "Anotação"}</span>
+                            <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16, marginTop: 2 }}>{post.titulo}</div>
+                            <div style={{ fontSize: 11, color: "#8A8270", marginTop: 2 }}>
+                              {post.autorNome} · {new Date(post.createdAt).toLocaleDateString("pt-BR")}
+                            </div>
+                          </div>
+                        </div>
+
+                        {post.tipo === "artigo" ? (
+                          <a href={post.link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8, color: "#B15C3E", fontWeight: 700, fontSize: 13, wordBreak: "break-all" }}>
+                            {post.link} ↗
+                          </a>
+                        ) : (
+                          <div style={{ fontSize: 13, marginTop: 8 }} dangerouslySetInnerHTML={{ __html: renderSimpleMarkdown(post.conteudo) }} />
+                        )}
+
+                        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                          {canEditPost(post) && (
+                            <button onClick={() => openEditPostForm(post)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#2A2621", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Editar</button>
+                          )}
+                          {post.autorUid === user.uid && (
+                            <button onClick={() => setPostSharingId(postSharingId === post.id ? null : post.id)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#2A2621", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                              Liberar edição
+                            </button>
+                          )}
+                          {canDeletePost(post) && (
+                            confirmDeletePostId === post.id ? (
+                              <>
+                                <button onClick={() => handleDeletePost(post.id)} style={{ border: "none", background: "#8A3F35", color: "#EFE9D8", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Confirmar apagar</button>
+                                <button onClick={() => setConfirmDeletePostId(null)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                              </>
+                            ) : (
+                              <button onClick={() => setConfirmDeletePostId(post.id)} style={{ border: "1px solid #8A3F35", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Apagar</button>
+                            )
+                          )}
+                        </div>
+
+                        {postSharingId === post.id && (
+                          <div style={{ marginTop: 10, background: "#EFE9D8", borderRadius: 6, padding: 10 }}>
+                            <div style={{ fontSize: 11, color: "#6E6656", marginBottom: 6 }}>Quem mais pode editar esse post:</div>
+                            {teamMembersList.filter((m) => m.uid !== post.autorUid).map((m) => (
+                              <label key={m.uid} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 4, cursor: "pointer" }}>
+                                <input type="checkbox" checked={(post.editoresPermitidos || []).includes(m.uid)} onChange={() => handleToggleEditor(post, m.uid)} />
+                                {m.displayName}
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
