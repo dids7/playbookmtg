@@ -1369,7 +1369,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     const checkDone = () => { if (matchesLoaded && catalogLoaded) setLoading(false); };
 
     const unsubscribe = subscribeSharedCatalog(team.teamId, ({ decks, lojas }) => {
-      setData((prev) => ({ ...prev, decks, lojas }));
+      setData((prev) => ({ ...prev, decks, lojas: [...lojas].sort((a, b) => a.localeCompare(b)) }));
       catalogLoaded = true;
       checkDone();
     });
@@ -2519,7 +2519,6 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
             {sbFormato && (
               <>
-                <div style={{ height: 12 }} />
                 <Field label="Meu deck">
                   {sbMyDeckOptions.length === 0 ? (
                     <div style={{ fontSize: 13, color: "#8A3F35" }}>Marca algum deck como seu na aba "Decks" primeiro.</div>
@@ -2674,7 +2673,6 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       </select>
                     </Field>
 
-                    <div style={{ height: 12 }} />
                     <div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>Tirar</div>
                     {sbForm.tirar.map((c, i) => (
                       <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
@@ -2777,7 +2775,6 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   </select>
                 </Field>
 
-                <div style={{ height: 12 }} />
                 <Field label="Tipo de partida">
                   <div style={{ display: "flex", gap: 8 }}>
                     {[{ key: "todos", label: "Todos" }, { key: "treino", label: "Treino" }, { key: "torneio", label: "Torneio" }].map((o) => (
@@ -2791,7 +2788,6 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   </div>
                 </Field>
 
-                <div style={{ height: 12 }} />
                 <Field label="Período">
                   <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                     {[{ key: "todos", label: "Todo o tempo" }, { key: "mes", label: "Mês" }, { key: "intervalo", label: "Intervalo" }].map((o) => (
@@ -3000,7 +2996,6 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
             {deckFormatoFilter && (
               <>
-                <div style={{ height: 16 }} />
                 <Field label="Adicionar deck">
                   <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                     <input value={newDeckName} onChange={(e) => setNewDeckName(e.target.value)}
@@ -3110,7 +3105,6 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </Field>
-                <div style={{ height: 12 }} />
 
                 <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px", marginBottom: 16 }}>
                   <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>
@@ -3355,7 +3349,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhuma partida registrada ainda.</div>
               ) : (
                 <>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
                     {[{ key: "mes", label: "Mês específico" }, { key: "intervalo", label: "Intervalo personalizado" }].map((o) => (
                       <button key={o.key} onClick={() => setReportMode(o.key)} style={{
                         flex: 1, padding: "8px 0", borderRadius: 6,
@@ -3370,12 +3364,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     <select
                       value={reportMonth || availableMonths[0]}
                       onChange={(e) => setReportMonth(e.target.value)}
-                      style={{ ...inputStyle, marginBottom: 10 }}
+                      style={{ ...inputStyle, marginBottom: 16 }}
                     >
                       {availableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
                     </select>
                   ) : (
-                    <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 4 }}>De</div>
                         <DatePicker value={reportRangeStart} onChange={setReportRangeStart} />
@@ -3387,8 +3381,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     </div>
                   )}
 
-                  <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 4 }}>Deck</div>
-                  <select value={reportDeck} onChange={(e) => setReportDeck(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, color: "#8A8270", marginTop: 4, marginBottom: 4 }}>Deck</div>
+                  <select value={reportDeck} onChange={(e) => setReportDeck(e.target.value)} style={{ ...inputStyle, marginBottom: 16 }}>
                     <option value="__all__">Todos os decks</option>
                     {reportDeckOptions.map((d) => <option key={d} value={d}>{d}</option>)}
                   </select>
@@ -3810,7 +3804,6 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </Field>
-                <div style={{ height: 10 }} />
                 <Field label="Período">
                   <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                     {[{ key: "todos", label: "Todo o tempo" }, { key: "mes", label: "Mês" }, { key: "intervalo", label: "Intervalo" }].map((o) => (
@@ -4552,7 +4545,7 @@ function GameRow({ label, game, onChange }) {
   );
 }
 function Field({ label, children }) {
-  return <div><div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>{label}</div>{children}</div>;
+  return <div style={{ marginBottom: 16 }}><div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>{label}</div>{children}</div>;
 }
 function SectionLabel({ children }) {
   return <div style={{ fontSize: 12, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656", marginBottom: 8 }}>{children}</div>;
