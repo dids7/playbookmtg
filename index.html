@@ -84,6 +84,9 @@
   const {
     getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion, deleteDoc
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+  const {
+    getStorage, ref, uploadBytes, getDownloadURL, deleteObject
+  } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js");
 
   const firebaseConfig = {
     apiKey: "AIzaSyCffhY0OX5gMnZBZ62GF07vSP8P1N7WemE",
@@ -99,7 +102,9 @@
     auth: getAuth(app),
     provider: new GoogleAuthProvider(),
     db: getFirestore(app),
+    storage: getStorage(app),
     signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion, deleteDoc,
+    ref, uploadBytes, getDownloadURL, deleteObject,
   };
   window.__fbReady = true;
   window.dispatchEvent(new Event("firebase-ready"));
@@ -390,6 +395,23 @@ async function updatePost(teamId, postId, patch) {
 async function deletePost(teamId, postId) {
   const { db, doc, deleteDoc } = window.__fb;
   await deleteDoc(doc(db, "teams", teamId, "posts", postId));
+}
+async function uploadPostFile(teamId, postId, file) {
+  const { storage, ref, uploadBytes, getDownloadURL } = window.__fb;
+  const path = `teams/${teamId}/posts/${postId}/${file.name}`;
+  const fileRef = ref(storage, path);
+  await uploadBytes(fileRef, file, { contentType: file.type || "application/pdf" });
+  const url = await getDownloadURL(fileRef);
+  return { url, path };
+}
+async function deletePostFile(path) {
+  const { storage, ref, deleteObject } = window.__fb;
+  if (!path) return;
+  try {
+    await deleteObject(ref(storage, path));
+  } catch (e) {
+    console.error("Erro ao apagar arquivo do Storage:", e);
+  }
 }
 async function fetchTeamMembers(teamId) {
   const { db, collection, getDocs } = window.__fb;
@@ -1468,12 +1490,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   }
 
   function openNewPostForm(tipo) {
-    setPostForm({ tipo, titulo: "", link: "", conteudo: "" });
+    setPostForm({ tipo, titulo: "", link: "", conteudo: "", arquivoFile: null });
     setPostEditingId(null);
     setPostError("");
   }
   function openEditPostForm(post) {
-    setPostForm({ tipo: post.tipo, titulo: post.titulo, link: post.link || "", conteudo: post.conteudo || "" });
+    setPostForm({ tipo: post.tipo, titulo: post.titulo, link: post.link || "", conteudo: post.conteudo || "", arquivoFile: null });
     setPostEditingId(post.id);
     setPostError("");
   }
@@ -1482,11 +1504,25 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     if (!postForm.titulo.trim()) { setPostError("Escreve um título."); return; }
     if (postForm.tipo === "artigo" && !postForm.link.trim()) { setPostError("Cola o link do artigo/vídeo."); return; }
     if (postForm.tipo === "anotacao" && !postForm.conteudo.trim()) { setPostError("Escreve o conteúdo da anotação."); return; }
+    if (postForm.tipo === "arquivo" && !postEditingId && !postForm.arquivoFile) { setPostError("Escolhe um arquivo PDF."); return; }
     setPostSaving(true);
     try {
       if (postEditingId) {
-        await updatePost(team.teamId, postEditingId, {
-          titulo: postForm.titulo.trim(), link: postForm.link.trim(), conteudo: postForm.conteudo,
+        if (postForm.tipo === "arquivo") {
+          await updatePost(team.teamId, postEditingId, { titulo: postForm.titulo.trim() });
+        } else {
+          await updatePost(team.teamId, postEditingId, {
+            titulo: postForm.titulo.trim(), link: postForm.link.trim(), conteudo: postForm.conteudo,
+          });
+        }
+      } else if (postForm.tipo === "arquivo") {
+        const newId = await createPost(team.teamId, {
+          tipo: "arquivo", titulo: postForm.titulo.trim(), link: "", conteudo: "",
+          autorUid: user.uid, autorNome: user.displayName || user.email,
+        });
+        const { url, path } = await uploadPostFile(team.teamId, newId, postForm.arquivoFile);
+        await updatePost(team.teamId, newId, {
+          link: url, filePath: path, fileName: postForm.arquivoFile.name, fileSize: postForm.arquivoFile.size,
         });
       } else {
         await createPost(team.teamId, {
@@ -1504,8 +1540,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   }
   async function handleDeletePost(postId) {
     setConfirmDeletePostId(null);
+    const post = posts.find((p) => p.id === postId);
     try {
       await deletePost(team.teamId, postId);
+      if (post && post.tipo === "arquivo" && post.filePath) {
+        deletePostFile(post.filePath).catch(() => {});
+      }
     } catch (e) {
       setError("Não consegui apagar o post: " + (e && e.message ? e.message : "erro"));
     }
@@ -3183,26 +3223,43 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                   <button onClick={() => openNewPostForm("artigo")} style={{ flex: 1, border: "none", background: "#2A2621", color: "#EFE9D8", borderRadius: 6, padding: "9px 0", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Artigo/Vídeo</button>
                   <button onClick={() => openNewPostForm("anotacao")} style={{ flex: 1, border: "none", background: "#B15C3E", color: "#EFE9D8", borderRadius: 6, padding: "9px 0", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Anotação</button>
+                  <button onClick={() => openNewPostForm("arquivo")} style={{ flex: 1, border: "none", background: "#4B6B4E", color: "#EFE9D8", borderRadius: 6, padding: "9px 0", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Arquivo (PDF)</button>
                 </div>
 
                 {postForm && (
                   <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14, marginBottom: 16 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
-                      {postEditingId ? "Editar" : "Novo"} {postForm.tipo === "artigo" ? "artigo/vídeo" : "anotação"}
+                      {postEditingId ? "Editar" : "Novo"} {postForm.tipo === "artigo" ? "artigo/vídeo" : postForm.tipo === "arquivo" ? "arquivo (PDF)" : "anotação"}
                     </div>
                     <Field label="Título">
                       <input value={postForm.titulo} onChange={(e) => setPostForm((f) => ({ ...f, titulo: e.target.value }))} style={inputStyle} placeholder="Título do post" />
                     </Field>
-                    {postForm.tipo === "artigo" ? (
+                    {postForm.tipo === "artigo" && (
                       <Field label="Link">
                         <input value={postForm.link} onChange={(e) => setPostForm((f) => ({ ...f, link: e.target.value }))} style={inputStyle} placeholder="https://..." />
                       </Field>
-                    ) : (
+                    )}
+                    {postForm.tipo === "anotacao" && (
                       <Field label="Conteúdo (aceita **negrito**, *itálico*, # título, - lista)">
                         <textarea value={postForm.conteudo} onChange={(e) => setPostForm((f) => ({ ...f, conteudo: e.target.value }))}
                           rows={6} style={{ ...inputStyle, width: "100%", resize: "vertical", fontFamily: "monospace", fontSize: 12 }}
                           placeholder={"# Contra Mono Red\n\nEsse matchup é **difícil** no jogo 1.\n- Guardar remoção pros criaturas pequenas\n- Sideboard: +2 Prismatic Strands"} />
                       </Field>
+                    )}
+                    {postForm.tipo === "arquivo" && (
+                      postEditingId ? (
+                        <div style={{ fontSize: 12, color: "#6E6656", marginBottom: 10 }}>Pra trocar o arquivo, apaga esse post e sobe um novo — só o título é editável aqui.</div>
+                      ) : (
+                        <Field label="Arquivo PDF">
+                          <label style={{
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 0", borderRadius: 6,
+                            border: "1px dashed #4B6B4E", color: "#4B6B4E", fontWeight: 700, fontSize: 13, cursor: "pointer",
+                          }}>
+                            {postForm.arquivoFile ? postForm.arquivoFile.name : "Selecionar arquivo .pdf"}
+                            <input type="file" accept=".pdf,application/pdf" onChange={(e) => setPostForm((f) => ({ ...f, arquivoFile: e.target.files[0] || null }))} style={{ display: "none" }} />
+                          </label>
+                        </Field>
+                      )
                     )}
                     {postForm.conteudo && postForm.tipo === "anotacao" && (
                       <div style={{ background: "#EFE9D8", borderRadius: 6, padding: 10, fontSize: 13, marginBottom: 10 }}
@@ -3211,7 +3268,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     {postError && <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "8px 10px", fontSize: 12, marginBottom: 10 }}>{postError}</div>}
                     <div style={{ display: "flex", gap: 8 }}>
                       <button onClick={handleSavePost} disabled={postSaving} style={{ flex: 1, padding: "9px 0", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 13, cursor: postSaving ? "default" : "pointer", opacity: postSaving ? 0.6 : 1 }}>
-                        {postSaving ? "Salvando…" : "Salvar"}
+                        {postSaving ? (postForm.tipo === "arquivo" ? "Enviando…" : "Salvando…") : "Salvar"}
                       </button>
                       <button onClick={() => { setPostForm(null); setPostEditingId(null); }} style={{ padding: "9px 14px", borderRadius: 6, border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
                     </div>
@@ -3228,8 +3285,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                           <div>
                             <span style={{
                               fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1,
-                              color: post.tipo === "artigo" ? "#B15C3E" : "#4B6B4E",
-                            }}>{post.tipo === "artigo" ? "Artigo/Vídeo" : "Anotação"}</span>
+                              color: post.tipo === "artigo" ? "#B15C3E" : post.tipo === "arquivo" ? "#4B6B4E" : "#8A3F35",
+                            }}>{post.tipo === "artigo" ? "Artigo/Vídeo" : post.tipo === "arquivo" ? "Arquivo (PDF)" : "Anotação"}</span>
                             <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16, marginTop: 2 }}>{post.titulo}</div>
                             <div style={{ fontSize: 11, color: "#8A8270", marginTop: 2 }}>
                               {post.autorNome} · {new Date(post.createdAt).toLocaleDateString("pt-BR")}
@@ -3237,11 +3294,21 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                           </div>
                         </div>
 
-                        {post.tipo === "artigo" ? (
+                        {post.tipo === "artigo" && (
                           <a href={post.link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8, color: "#B15C3E", fontWeight: 700, fontSize: 13, wordBreak: "break-all" }}>
                             {post.link} ↗
                           </a>
-                        ) : (
+                        )}
+                        {post.tipo === "arquivo" && (
+                          post.link ? (
+                            <a href={post.link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8, color: "#4B6B4E", fontWeight: 700, fontSize: 13 }}>
+                              📄 {post.fileName || "Abrir arquivo"} {post.fileSize ? `(${(post.fileSize / 1024 / 1024).toFixed(1)} MB)` : ""} ↗
+                            </a>
+                          ) : (
+                            <div style={{ fontSize: 12, color: "#8A8270", marginTop: 8 }}>Enviando arquivo…</div>
+                          )
+                        )}
+                        {post.tipo === "anotacao" && (
                           <div style={{ fontSize: 13, marginTop: 8 }} dangerouslySetInnerHTML={{ __html: renderSimpleMarkdown(post.conteudo) }} />
                         )}
 
