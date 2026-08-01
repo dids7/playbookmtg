@@ -636,12 +636,13 @@ function computeMatchStats(matches) {
   const winRate = total ? Math.round((wins / total) * 100) : 0;
   const byOpp = {};
   matches.forEach((m) => {
-    byOpp[m.oponenteDeck] = byOpp[m.oponenteDeck] || { total: 0, wins: 0 };
+    byOpp[m.oponenteDeck] = byOpp[m.oponenteDeck] || { total: 0, wins: 0, losses: 0 };
     byOpp[m.oponenteDeck].total += 1;
     if (m.resultado === "vitoria") byOpp[m.oponenteDeck].wins += 1;
+    else if (m.resultado === "derrota") byOpp[m.oponenteDeck].losses += 1;
   });
   const chartData = Object.entries(byOpp)
-    .map(([opp, v]) => ({ name: opp, total: v.total, wins: v.wins, losses: v.total - v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
+    .map(([opp, v]) => ({ name: opp, total: v.total, wins: v.wins, losses: v.losses, winRate: Math.round((v.wins / v.total) * 100) }))
     .sort((a, b) => b.total - a.total);
   return { total, wins, losses, draws, winRate, chartData };
 }
@@ -670,7 +671,7 @@ function weekStartLabel(dateStr) {
 function computeReportStats(matches) {
   const total = matches.length;
   const wins = matches.filter((m) => m.resultado === "vitoria").length;
-  const losses = total - wins;
+  const losses = matches.filter((m) => m.resultado === "derrota").length;
   const winRate = total ? Math.round((wins / total) * 100) : 0;
 
   const byTipo = (tipo) => {
@@ -692,9 +693,10 @@ function computeReportStats(matches) {
 
   const byOpp = {};
   matches.forEach((m) => {
-    byOpp[m.oponenteDeck] = byOpp[m.oponenteDeck] || { total: 0, wins: 0 };
+    byOpp[m.oponenteDeck] = byOpp[m.oponenteDeck] || { total: 0, wins: 0, losses: 0 };
     byOpp[m.oponenteDeck].total += 1;
     if (m.resultado === "vitoria") byOpp[m.oponenteDeck].wins += 1;
+    else if (m.resultado === "derrota") byOpp[m.oponenteDeck].losses += 1;
   });
   const matchupStats = Object.entries(byOpp).map(([opp, v]) => {
     const oppMatches = matches.filter((m) => m.oponenteDeck === opp);
@@ -704,7 +706,7 @@ function computeReportStats(matches) {
     const postWins = postBoardGames.filter((g) => g.resultado === "vitoria").length;
     const sampleLabel = v.total < 3 ? "amostra pequena" : v.total < 7 ? "amostra média" : "amostra boa";
     return {
-      opp, total: v.total, wins: v.wins, losses: v.total - v.wins, winRate: Math.round((v.wins / v.total) * 100),
+      opp, total: v.total, wins: v.wins, losses: v.losses, winRate: Math.round((v.wins / v.total) * 100),
       g1WinRate: g1Games.length ? Math.round((g1Wins / g1Games.length) * 100) : null,
       postBoardWinRate: postBoardGames.length ? Math.round((postWins / postBoardGames.length) * 100) : null,
       sampleLabel,
