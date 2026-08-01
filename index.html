@@ -2144,7 +2144,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     return [...own, ...others];
   }, [visible, data.matches, teamPlayers]);
   const teamFilteredMatches = useMemo(() => {
-    let list = combinedMatches;
+    let list = combinedMatches.filter((m) => m.tipo === "torneio");
     if (teamStatsFormato !== "__all__") list = list.filter((m) => m.formato === teamStatsFormato);
     return list;
   }, [combinedMatches, teamStatsFormato]);
@@ -2237,23 +2237,28 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     }));
   }, [adminData, adminMonthFilter, adminFormatoFilter, adminPeriodMode, adminRangeStart, adminRangeEnd]);
 
-  const adminCombinedMatches = useMemo(() => adminFilteredByPlayer.flatMap((p) => p.matches), [adminFilteredByPlayer]);
+  const adminCombinedMatches = useMemo(() => adminFilteredByPlayer.flatMap((p) => p.matches.filter((m) => m.tipo === "torneio")), [adminFilteredByPlayer]);
 
   const adminOverall = useMemo(() => computeMatchStats(adminCombinedMatches), [adminCombinedMatches]);
 
   const adminByPlayer = useMemo(() => {
     return adminFilteredByPlayer
-      .map((p) => ({
-        ...p,
-        stats: computeMatchStats(p.matches),
-        torneioStats: computeMatchStats(p.matches.filter((m) => m.tipo === "torneio")),
-        treinoStats: computeMatchStats(p.matches.filter((m) => m.tipo === "treino")),
-      }))
+      .map((p) => {
+        const torneioMatches = p.matches.filter((m) => m.tipo === "torneio");
+        const treinoMatches = p.matches.filter((m) => m.tipo === "treino");
+        return {
+          ...p,
+          stats: computeMatchStats(torneioMatches), // relatório geral do time = só torneio
+          torneioStats: computeMatchStats(torneioMatches),
+          treinoStats: computeMatchStats(treinoMatches),
+        };
+      })
       .sort((a, b) => wilsonScore(b.stats.wins, b.stats.total) - wilsonScore(a.stats.wins, a.stats.total));
   }, [adminFilteredByPlayer]);
 
   const adminPlayerFeedback = useMemo(() => {
     return adminFilteredByPlayer
+      .map((p) => ({ ...p, matches: p.matches.filter((m) => m.tipo === "torneio") }))
       .filter((p) => p.matches.length > 0)
       .map((p) => {
         const r = computeReportStats(p.matches);
