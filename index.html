@@ -3777,8 +3777,16 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 <SectionLabel>Distribuição das partidas</SectionLabel>
                 <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
                   <PieChartCustom data={(() => {
-                    const total = monthlyReport.matchupStats.reduce((s, d) => s + d.total, 0);
-                    return monthlyReport.matchupStats.map((m) => ({ name: m.opp, winRate: m.winRate, total: m.total, percent: total ? Math.round((m.total / total) * 100) : 0 }));
+                    const total = monthlyReport.total;
+                    const draws = Math.max(0, total - monthlyReport.wins - monthlyReport.losses);
+                    const buckets = [
+                      { name: "Vitórias", count: monthlyReport.wins, winRate: 100 },
+                      { name: "Derrotas", count: monthlyReport.losses, winRate: 0 },
+                      { name: "Empates", count: draws, winRate: 50 },
+                    ];
+                    return buckets
+                      .filter((b) => b.count > 0)
+                      .map((b) => ({ name: b.name, winRate: b.winRate, total: b.count, percent: total ? Math.round((b.count / total) * 100) : 0 }));
                   })()} />
                 </div>
 
