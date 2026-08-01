@@ -1369,29 +1369,50 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     }
   }
 
-  const reportCaptureRef = useRef(null);
+  const reportSectionRefs = useRef({});
 
   async function handleDownloadReportImage() {
-    if (!reportCaptureRef.current || !window.html2canvas) return;
+    if (!window.html2canvas) return;
     setImageGenerating(true);
     try {
-      const canvas = await window.html2canvas(reportCaptureRef.current, {
-        backgroundColor: "#EFE9D8",
-        scale: 2,
-        useCORS: true,
-      });
-      const dataUrl = canvas.toDataURL("image/png");
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = `relatorio-${team.name.replace(/\s+/g, "-").toLowerCase()}-${adminMonthFilter}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      const order = ["resumo", "playdraw", "mulligan", "categoria", "matchup", "torneios", "porjogador", "pordeck"];
+      const baseName = `relatorio-${team.name.replace(/\s+/g, "-").toLowerCase()}-${adminMonthFilter}`;
+      for (const key of order) {
+        const el = reportSectionRefs.current[key];
+        if (!el) continue;
+        const canvas = await window.html2canvas(el, { backgroundColor: "#EFE9D8", scale: 2, useCORS: true });
+        const dataUrl = canvas.toDataURL("image/png");
+        const a = document.createElement("a");
+        a.href = dataUrl;
+        a.download = `${baseName}-${key}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
     } catch (e) {
-      setAdminError("Não consegui gerar a imagem: " + (e && e.message ? e.message : "erro"));
+      setAdminError("Não consegui gerar as imagens: " + (e && e.message ? e.message : "erro"));
     } finally {
       setImageGenerating(false);
     }
+  }
+
+  function reportCard(key, title, content) {
+    return (
+      <div style={{ position: "fixed", top: 0, left: -99999, zIndex: -1 }}>
+        <div ref={(el) => { reportSectionRefs.current[key] = el; }} style={{ width: 800, background: "#EFE9D8", color: "#2A2621", fontFamily: "'Roboto Condensed', sans-serif", padding: 32 }}>
+          <div style={{ borderBottom: "4px solid #2A2621", paddingBottom: 16, marginBottom: 24 }}>
+            <div style={{ fontSize: 14, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>{team.name} · Playbook</div>
+            <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 30 }}>
+              {title}{adminFormatoFilter ? ` · ${adminFormatoFilter}` : ""}
+            </div>
+            <div style={{ fontSize: 16, color: "#6E6656", marginTop: 4 }}>{adminPeriodLabel}</div>
+          </div>
+          {content}
+          <div style={{ textAlign: "center", fontSize: 12, color: "#8A8270", marginTop: 20 }}>Gerado pelo Playbook</div>
+        </div>
+      </div>
+    );
   }
 
   const isTeamOwner = team && team.ownerUid === user.uid;
@@ -4106,21 +4127,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   disabled={imageGenerating}
                   style={{ width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #C9C0A6", background: "#F6F1E1", color: "#2A2621", fontWeight: 700, fontSize: 14, cursor: imageGenerating ? "default" : "pointer", marginTop: 8, opacity: imageGenerating ? 0.7 : 1 }}
                 >
-                  {imageGenerating ? "Gerando imagem…" : "🖼️ Baixar imagem do relatório"}
+                  {imageGenerating ? "Gerando imagens…" : "🖼️ Baixar imagens do relatório (por categoria)"}
                 </button>
 
-                <div style={{ position: "fixed", top: 0, left: -99999, zIndex: -1 }}>
-                  <div ref={reportCaptureRef} style={{ width: 800, background: "#EFE9D8", color: "#2A2621", fontFamily: "'Roboto Condensed', sans-serif", padding: 32 }}>
-                    <div style={{ borderBottom: "4px solid #2A2621", paddingBottom: 16, marginBottom: 24 }}>
-                      <div style={{ fontSize: 14, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>{team.name} · Playbook</div>
-                      <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 34 }}>
-                        Relatório do Time{adminFormatoFilter ? ` · ${adminFormatoFilter}` : ""}
-                      </div>
-                      <div style={{ fontSize: 16, color: "#6E6656", marginTop: 4 }}>
-                        {adminPeriodLabel}
-                      </div>
-                    </div>
-
+                {reportCard("resumo", "Resumo geral", (
+                  <>
                     <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 12, padding: "28px 24px", marginBottom: 24 }}>
                       <div style={{ fontSize: 13, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>Win rate geral</div>
                       <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginTop: 8 }}>
@@ -4149,7 +4160,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     )}
 
                     {(adminTeamBestMatchup || adminTeamWorstMatchup) && (
-                      <div style={{ marginBottom: 24 }}>
+                      <div>
                         {adminTeamBestMatchup && (
                           <div style={{ background: "#E4EDE3", borderLeft: "6px solid #4B6B4E", borderRadius: 8, padding: "12px 16px", fontSize: 15, marginBottom: 8 }}>
                             Deck que mais vencemos: <strong>{adminTeamBestMatchup.name}</strong> ({adminTeamBestMatchup.winRate}%, {adminTeamBestMatchup.total} jogos)
@@ -4162,112 +4173,93 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                         )}
                       </div>
                     )}
+                  </>
+                ))}
 
-                    {(adminPlayDraw.play.total > 0 || adminPlayDraw.draw.total > 0) && (
-                      <>
-                        <div style={{ fontSize: 14, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656", marginBottom: 10 }}>Play vs Draw</div>
-                        <div style={{ display: "flex", gap: 14, marginBottom: 24 }}>
-                          <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 10, padding: 16 }}>
-                            <div style={{ fontSize: 12, color: "#6E6656", textTransform: "uppercase" }}>Jogando 1º</div>
-                            <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, marginTop: 4 }}>{adminPlayDraw.play.winRate}%</div>
-                            <div style={{ fontSize: 13, color: "#8A8270" }}>{adminPlayDraw.play.wins}V/{adminPlayDraw.play.losses}D ({adminPlayDraw.play.total})</div>
-                          </div>
-                          <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 10, padding: 16 }}>
-                            <div style={{ fontSize: 12, color: "#6E6656", textTransform: "uppercase" }}>Jogando 2º</div>
-                            <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, marginTop: 4 }}>{adminPlayDraw.draw.winRate}%</div>
-                            <div style={{ fontSize: 13, color: "#8A8270" }}>{adminPlayDraw.draw.wins}V/{adminPlayDraw.draw.losses}D ({adminPlayDraw.draw.total})</div>
-                          </div>
-                        </div>
-                      </>
-                    )}
-
-                    {(adminMulligan.com.total > 0 || adminMulligan.sem.total > 0) && (
-                      <>
-                        <div style={{ fontSize: 14, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656", marginBottom: 10 }}>Mulligan</div>
-                        <div style={{ display: "flex", gap: 14, marginBottom: 24 }}>
-                          <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 10, padding: 16 }}>
-                            <div style={{ fontSize: 12, color: "#6E6656", textTransform: "uppercase" }}>Com mulligan</div>
-                            <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, marginTop: 4 }}>{adminMulligan.com.winRate}%</div>
-                            <div style={{ fontSize: 13, color: "#8A8270" }}>{adminMulligan.com.wins}V/{adminMulligan.com.losses}D ({adminMulligan.com.total})</div>
-                          </div>
-                          <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 10, padding: 16 }}>
-                            <div style={{ fontSize: 12, color: "#6E6656", textTransform: "uppercase" }}>Sem mulligan</div>
-                            <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, marginTop: 4 }}>{adminMulligan.sem.winRate}%</div>
-                            <div style={{ fontSize: 13, color: "#8A8270" }}>{adminMulligan.sem.wins}V/{adminMulligan.sem.losses}D ({adminMulligan.sem.total})</div>
-                          </div>
-                        </div>
-                      </>
-                    )}
-
-                    {adminByCategoria.length > 0 && (
-                      <>
-                        <div style={{ fontSize: 14, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656", marginBottom: 10 }}>Por categoria de arquétipo</div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
-                          {adminByCategoria.map((c, i) => (
-                            <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
-                              <span style={{ fontSize: 15 }}>{c.categoria}</span>
-                              <strong style={{ fontSize: 15 }}>{c.winRate}% ({c.wins}V/{c.losses}D)</strong>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    )}
-
-                    {adminOverall.chartData.length > 0 && (
-                      <>
-                        <div style={{ fontSize: 14, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656", marginBottom: 10 }}>Win rate por matchup</div>
-                        <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 18, marginBottom: 24 }}>
-                          <BarChartCustom data={adminOverall.chartData} />
-                        </div>
-                      </>
-                    )}
-
-                    {adminTournamentsWithPlayer.length > 0 && (
-                      <>
-                        <div style={{ fontSize: 14, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656", marginBottom: 10 }}>Torneios do período</div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
-                          {adminTournamentsWithPlayer.map((t, i) => (
-                            <div key={i} style={{ background: "#F6F1E1", borderRadius: 10, padding: "14px 16px" }}>
-                              <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6 }}>{t.local} · {t.data}</div>
-                              {t.players.map((p, j) => (
-                                <div key={j} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
-                                  <span style={{ color: "#6E6656" }}>{p.displayName}</span>
-                                  <strong>{p.colocacao || "—"}</strong>
-                                </div>
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    )}
-
-                    <div style={{ fontSize: 14, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656", marginBottom: 10 }}>Por jogador</div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
-                      {adminByPlayer.map((p) => (
-                        <div key={p.uid} style={{ background: "#F6F1E1", borderRadius: 10, padding: "14px 16px", display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16 }}>{p.displayName}</span>
-                          <strong style={{ color: barColor(p.stats.winRate) }}>{p.stats.winRate}% ({p.stats.wins}V/{p.stats.losses}D)</strong>
-                        </div>
-                      ))}
+                {(adminPlayDraw.play.total > 0 || adminPlayDraw.draw.total > 0) && reportCard("playdraw", "Play vs Draw", (
+                  <div style={{ display: "flex", gap: 14 }}>
+                    <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 10, padding: 16 }}>
+                      <div style={{ fontSize: 12, color: "#6E6656", textTransform: "uppercase" }}>Jogando 1º</div>
+                      <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, marginTop: 4 }}>{adminPlayDraw.play.winRate}%</div>
+                      <div style={{ fontSize: 13, color: "#8A8270" }}>{adminPlayDraw.play.wins}V/{adminPlayDraw.play.losses}D ({adminPlayDraw.play.total})</div>
                     </div>
-
-                    {adminByDeck.length > 0 && (
-                      <>
-                        <div style={{ fontSize: 14, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656", marginBottom: 10 }}>Por deck</div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 8 }}>
-                          {adminByDeck.map((d, i) => (
-                            <div key={i} style={{ background: "#F6F1E1", borderRadius: 10, padding: "14px 16px", display: "flex", justifyContent: "space-between" }}>
-                              <span style={{ fontSize: 15 }}>{d.deck}</span>
-                              <strong style={{ fontSize: 15 }}>{d.winRate}% ({d.wins}/{d.total})</strong>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    )}
-
-                    <div style={{ textAlign: "center", fontSize: 12, color: "#8A8270", marginTop: 20 }}>Gerado pelo Playbook</div>
+                    <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 10, padding: 16 }}>
+                      <div style={{ fontSize: 12, color: "#6E6656", textTransform: "uppercase" }}>Jogando 2º</div>
+                      <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, marginTop: 4 }}>{adminPlayDraw.draw.winRate}%</div>
+                      <div style={{ fontSize: 13, color: "#8A8270" }}>{adminPlayDraw.draw.wins}V/{adminPlayDraw.draw.losses}D ({adminPlayDraw.draw.total})</div>
+                    </div>
                   </div>
-                </div>
+                ))}
+
+                {(adminMulligan.com.total > 0 || adminMulligan.sem.total > 0) && reportCard("mulligan", "Mulligan", (
+                  <div style={{ display: "flex", gap: 14 }}>
+                    <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 10, padding: 16 }}>
+                      <div style={{ fontSize: 12, color: "#6E6656", textTransform: "uppercase" }}>Com mulligan</div>
+                      <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, marginTop: 4 }}>{adminMulligan.com.winRate}%</div>
+                      <div style={{ fontSize: 13, color: "#8A8270" }}>{adminMulligan.com.wins}V/{adminMulligan.com.losses}D ({adminMulligan.com.total})</div>
+                    </div>
+                    <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 10, padding: 16 }}>
+                      <div style={{ fontSize: 12, color: "#6E6656", textTransform: "uppercase" }}>Sem mulligan</div>
+                      <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, marginTop: 4 }}>{adminMulligan.sem.winRate}%</div>
+                      <div style={{ fontSize: 13, color: "#8A8270" }}>{adminMulligan.sem.wins}V/{adminMulligan.sem.losses}D ({adminMulligan.sem.total})</div>
+                    </div>
+                  </div>
+                ))}
+
+                {adminByCategoria.length > 0 && reportCard("categoria", "Por categoria de arquétipo", (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {adminByCategoria.map((c, i) => (
+                      <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "12px 16px", display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: 15 }}>{c.categoria}</span>
+                        <strong style={{ fontSize: 15 }}>{c.winRate}% ({c.wins}V/{c.losses}D)</strong>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                {adminOverall.chartData.length > 0 && reportCard("matchup", "Win rate por matchup", (
+                  <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 18 }}>
+                    <BarChartCustom data={adminOverall.chartData} />
+                  </div>
+                ))}
+
+                {adminTournamentsWithPlayer.length > 0 && reportCard("torneios", "Torneios do período", (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {adminTournamentsWithPlayer.map((t, i) => (
+                      <div key={i} style={{ background: "#F6F1E1", borderRadius: 10, padding: "14px 16px" }}>
+                        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6 }}>{t.local} · {t.data}</div>
+                        {t.players.map((p, j) => (
+                          <div key={j} style={{ display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                            <span style={{ color: "#6E6656" }}>{p.displayName}</span>
+                            <strong>{p.colocacao || "—"}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                {adminByPlayer.length > 0 && reportCard("porjogador", "Por jogador", (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {adminByPlayer.map((p) => (
+                      <div key={p.uid} style={{ background: "#F6F1E1", borderRadius: 10, padding: "14px 16px", display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16 }}>{p.displayName}</span>
+                        <strong style={{ color: barColor(p.stats.winRate) }}>{p.stats.winRate}% ({p.stats.wins}V/{p.stats.losses}D)</strong>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                {adminByDeck.length > 0 && reportCard("pordeck", "Por deck", (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {adminByDeck.map((d, i) => (
+                      <div key={i} style={{ background: "#F6F1E1", borderRadius: 10, padding: "14px 16px", display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: 15 }}>{d.deck}</span>
+                        <strong style={{ fontSize: 15 }}>{d.winRate}% ({d.wins}/{d.total})</strong>
+                      </div>
+                    ))}
+                  </div>
+                ))}
               </>
             )}
           </div>
