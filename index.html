@@ -632,6 +632,7 @@ function computeMatchStats(matches) {
   const total = matches.length;
   const wins = matches.filter((m) => m.resultado === "vitoria").length;
   const losses = matches.filter((m) => m.resultado === "derrota").length;
+  const draws = matches.filter((m) => m.resultado === "empate").length;
   const winRate = total ? Math.round((wins / total) * 100) : 0;
   const byOpp = {};
   matches.forEach((m) => {
@@ -642,7 +643,7 @@ function computeMatchStats(matches) {
   const chartData = Object.entries(byOpp)
     .map(([opp, v]) => ({ name: opp, total: v.total, wins: v.wins, losses: v.total - v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
     .sort((a, b) => b.total - a.total);
-  return { total, wins, losses, winRate, chartData };
+  return { total, wins, losses, draws, winRate, chartData };
 }
 function deckKey(formato, name) { return formato + "||" + name; }
 
@@ -2380,7 +2381,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     const lines = [];
     lines.push(`📊 RELATÓRIO DO TIME — ${periodo}`);
     lines.push("");
-    lines.push(`Win rate geral: ${adminOverall.winRate}% (${adminOverall.wins}V/${adminOverall.losses}D em ${adminOverall.total} partidas)`);
+    lines.push(`Win rate geral: ${adminOverall.winRate}% (${adminOverall.wins}V/${adminOverall.losses}D${adminOverall.draws > 0 ? `/${adminOverall.draws}E` : ""} em ${adminOverall.total} partidas)`);
     if (adminTeamWorstMatchup) lines.push(`Deck que mais nos venceu: ${adminTeamWorstMatchup.name} (${adminTeamWorstMatchup.winRate}% de vitórias nossas, ${adminTeamWorstMatchup.total} jogos)`);
     if (adminTeamBestMatchup) lines.push(`Deck que mais vencemos: ${adminTeamBestMatchup.name} (${adminTeamBestMatchup.winRate}% de vitórias, ${adminTeamBestMatchup.total} jogos)`);
     lines.push("");
@@ -3290,7 +3291,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   </div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
                     <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 44 }}>{teamStats.winRate}%</span>
-                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{teamStats.wins}V / {teamStats.losses}D em {teamStats.total} partidas</span>
+                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{teamStats.wins}V / {teamStats.losses}D{teamStats.draws > 0 ? ` / ${teamStats.draws}E` : ""} em {teamStats.total} partidas</span>
                   </div>
                 </div>
 
@@ -4072,7 +4073,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   </div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
                     <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 44 }}>{adminOverall.winRate}%</span>
-                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{adminOverall.wins}V / {adminOverall.losses}D em {adminOverall.total} partidas</span>
+                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{adminOverall.wins}V / {adminOverall.losses}D{adminOverall.draws > 0 ? ` / ${adminOverall.draws}E` : ""} em {adminOverall.total} partidas</span>
                   </div>
                 </div>
 
@@ -4273,7 +4274,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       <div style={{ fontSize: 13, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>Win rate geral</div>
                       <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginTop: 8 }}>
                         <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 64 }}>{adminOverall.winRate}%</span>
-                        <span style={{ fontSize: 18, color: "#C9C0A6" }}>{adminOverall.wins}V / {adminOverall.losses}D em {adminOverall.total} partidas</span>
+                        <span style={{ fontSize: 18, color: "#C9C0A6" }}>{adminOverall.wins}V / {adminOverall.losses}D{adminOverall.draws > 0 ? ` / ${adminOverall.draws}E` : ""} em {adminOverall.total} partidas</span>
                       </div>
                     </div>
 
