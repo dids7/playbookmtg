@@ -891,6 +891,56 @@ function generateReportNarrative(r, periodLabel) {
   return parts.join(" ");
 }
 
+function computePlayerFeedback(r) {
+  const positives = [];
+  const negatives = [];
+  if (!r || r.total === 0) return { positives, negatives };
+
+  if (r.total >= 3 && r.winRate >= 55) positives.push(`Win rate geral sólido: ${r.winRate}% (${r.wins}V/${r.losses}D).`);
+  if (r.total >= 3 && r.winRate <= 40) negatives.push(`Win rate geral baixo: ${r.winRate}% (${r.wins}V/${r.losses}D).`);
+
+  if (r.bestWinStreak >= 3) positives.push(`Sequência de ${r.bestWinStreak} vitórias seguidas no período.`);
+  if (r.bestLossStreak >= 3) negatives.push(`Sequência de ${r.bestLossStreak} derrotas seguidas no período.`);
+
+  const bestOk = r.matchupStats.find((m) => m.total >= 3 && m.winRate >= 65);
+  if (bestOk) positives.push(`Domina o matchup contra ${bestOk.opp}: ${bestOk.winRate}% (${bestOk.wins}/${bestOk.total}).`);
+  const worstOk = [...r.matchupStats].filter((m) => m.total >= 3).sort((a, b) => a.winRate - b.winRate)[0];
+  if (worstOk && worstOk.winRate <= 35) negatives.push(`Dificuldade contra ${worstOk.opp}: ${worstOk.winRate}% (${worstOk.wins}/${worstOk.total}).`);
+
+  if (r.lostG1Total >= 2 && r.comebackRate >= 40) positives.push(`Boa capacidade de virar: ${r.comebackRate}% de comeback depois de perder o Jogo 1.`);
+  if (r.wonG1Total >= 2 && r.chokeRate >= 40) negatives.push(`Choke rate alto: ${r.chokeRate}% das vezes que ganhou o Jogo 1 acabou perdendo a partida.`);
+
+  const postBoardGood = r.matchupStats.find((m) => m.total >= 3 && m.g1WinRate !== null && m.postBoardWinRate !== null && m.postBoardWinRate - m.g1WinRate >= 15);
+  if (postBoardGood) positives.push(`Sideboard funcionando contra ${postBoardGood.opp}: pós-board ${postBoardGood.postBoardWinRate}% vs. ${postBoardGood.g1WinRate}% no Jogo 1.`);
+  const postBoardBad = r.matchupStats.find((m) => m.total >= 3 && m.g1WinRate !== null && m.postBoardWinRate !== null && m.g1WinRate - m.postBoardWinRate >= 15);
+  if (postBoardBad) negatives.push(`Sideboard não ajudando contra ${postBoardBad.opp}: cai pra ${postBoardBad.postBoardWinRate}% pós-board (Jogo 1 era ${postBoardBad.g1WinRate}%).`);
+
+  const mull2 = r.mullByCount.find((m) => m.label === "2+ mulligans");
+  if (mull2 && mull2.total >= 3 && mull2.winRate <= 30) negatives.push(`Jogos com 2+ mulligans renderam só ${mull2.winRate}% de vitórias (${mull2.total} jogos).`);
+  const mull0 = r.mullByCount.find((m) => m.label === "Sem mulligan");
+  if (mull0 && mull0.total >= 5 && mull0.winRate >= 65) positives.push(`Forte sem precisar de mulligan: ${mull0.winRate}% de vitórias (${mull0.total} jogos).`);
+
+  if (r.lossTagStats.length > 0 && r.lossTagStats[0].percent >= 30 && r.totalLosses >= 3) {
+    negatives.push(`Motivo de derrota mais comum: ${r.lossTagStats[0].tag} (${r.lossTagStats[0].percent}% das derrotas).`);
+  }
+
+  if (r.rodadaStats.length >= 3) {
+    const half = Math.ceil(r.rodadaStats.length / 2);
+    const early = r.rodadaStats.slice(0, half);
+    const late = r.rodadaStats.slice(half);
+    const earlyTotal = early.reduce((s, x) => s + x.total, 0);
+    const lateTotal = late.reduce((s, x) => s + x.total, 0);
+    if (earlyTotal >= 2 && lateTotal >= 2) {
+      const earlyWR = Math.round((early.reduce((s, x) => s + x.wins, 0) / earlyTotal) * 100);
+      const lateWR = Math.round((late.reduce((s, x) => s + x.wins, 0) / lateTotal) * 100);
+      if (lateWR - earlyWR >= 15) positives.push(`Melhora nas rodadas finais dos torneios: ${lateWR}% vs. ${earlyWR}% nas rodadas iniciais.`);
+      if (earlyWR - lateWR >= 15) negatives.push(`Queda de rendimento nas rodadas finais dos torneios: ${lateWR}% vs. ${earlyWR}% nas rodadas iniciais.`);
+    }
+  }
+
+  return { positives, negatives };
+}
+
 async function loadUserData(uidStr) {
   const { db, doc, getDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
@@ -1375,7 +1425,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     if (!window.html2canvas) return;
     setImageGenerating(true);
     try {
-      const order = ["resumo", "playdraw", "mulligan", "categoria", "matchup", "torneios", "porjogador", "pordeck"];
+      const order = ["resumo", "playdraw", "mulligan", "categoria", "matchup", "torneios", "porjogador", "pordeck", "feedback"];
       const baseName = `relatorio-${team.name.replace(/\s+/g, "-").toLowerCase()}-${adminMonthFilter}`;
       for (const key of order) {
         const el = reportSectionRefs.current[key];
@@ -2159,6 +2209,10 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     if (!monthlyReport || !reportPeriodLabel) return "";
     return generateReportNarrative(monthlyReport, reportPeriodLabel);
   }, [monthlyReport, reportPeriodLabel]);
+  const monthlyFeedback = useMemo(() => {
+    if (!monthlyReport) return { positives: [], negatives: [] };
+    return computePlayerFeedback(monthlyReport);
+  }, [monthlyReport]);
   const adminAvailableMonths = useMemo(() => {
     if (!adminData) return [];
     const keys = new Set();
@@ -2195,6 +2249,17 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         treinoStats: computeMatchStats(p.matches.filter((m) => m.tipo === "treino")),
       }))
       .sort((a, b) => wilsonScore(b.stats.wins, b.stats.total) - wilsonScore(a.stats.wins, a.stats.total));
+  }, [adminFilteredByPlayer]);
+
+  const adminPlayerFeedback = useMemo(() => {
+    return adminFilteredByPlayer
+      .filter((p) => p.matches.length > 0)
+      .map((p) => {
+        const r = computeReportStats(p.matches);
+        const fb = computePlayerFeedback(r);
+        return { uid: p.uid, displayName: p.displayName, winRate: r.winRate, wins: r.wins, losses: r.losses, total: r.total, topPositive: fb.positives[0] || null, topNegative: fb.negatives[0] || null };
+      })
+      .sort((a, b) => b.total - a.total);
   }, [adminFilteredByPlayer]);
 
   const adminPlayerOfMonth = useMemo(() => {
@@ -2338,8 +2403,17 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       if (best) lines.push(`  Melhor: vs ${best.name} (${best.winRate}%)`);
       if (worst && worst.name !== best?.name) lines.push(`  Pior: vs ${worst.name} (${worst.winRate}%)`);
     });
+    if (adminPlayerFeedback.length > 0) {
+      lines.push("");
+      lines.push("📋 FEEDBACK POR JOGADOR");
+      adminPlayerFeedback.forEach((f) => {
+        lines.push(`${f.displayName}: ${f.winRate}% (${f.wins}V/${f.losses}D)`);
+        if (f.topPositive) lines.push(`  ✅ ${f.topPositive}`);
+        if (f.topNegative) lines.push(`  ⚠️ ${f.topNegative}`);
+      });
+    }
     return lines.join("\n");
-  }, [adminPeriodLabel, adminOverall, adminTeamBestMatchup, adminTeamWorstMatchup, adminTournamentsWithPlayer, adminByPlayer, adminPlayerOfMonth, adminNeymarOfMonth]);
+  }, [adminPeriodLabel, adminOverall, adminTeamBestMatchup, adminTeamWorstMatchup, adminTournamentsWithPlayer, adminByPlayer, adminPlayerOfMonth, adminNeymarOfMonth, adminPlayerFeedback]);
 
   const favoriteDecksByFormato = useMemo(() => {
     const grouped = {};
@@ -3878,6 +3952,32 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     </div>
                   ))}
                 </div>
+
+                {(monthlyFeedback.positives.length > 0 || monthlyFeedback.negatives.length > 0) && (
+                  <>
+                    <SectionLabel>Feedback do período</SectionLabel>
+                    {monthlyFeedback.positives.length > 0 && (
+                      <div style={{ background: "#E4EDE3", borderLeft: "4px solid #4B6B4E", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: "#4B6B4E", marginBottom: 6 }}>✅ Pontos positivos</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {monthlyFeedback.positives.map((p, i) => (
+                            <div key={i} style={{ fontSize: 13, color: "#2A2621" }}>• {p}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {monthlyFeedback.negatives.length > 0 && (
+                      <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 8, padding: "12px 14px" }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: "#8A3F35", marginBottom: 6 }}>⚠️ Pontos de atenção</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {monthlyFeedback.negatives.map((n, i) => (
+                            <div key={i} style={{ fontSize: 13, color: "#2A2621" }}>• {n}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </>
             )}
           </div>
@@ -4028,6 +4128,25 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                             <strong>{d.winRate}% ({d.wins}/{d.total})</strong>
                             <div style={{ fontSize: 11, color: "#8A8270", fontWeight: 500 }}>conf: {Math.round(wilsonScore(d.wins, d.total) * 100)}%</div>
                           </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {adminPlayerFeedback.length > 0 && (
+                  <>
+                    <SectionLabel>Feedback por jogador</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                      {adminPlayerFeedback.map((f) => (
+                        <div key={f.uid} style={{ background: "#F6F1E1", borderRadius: 8, padding: "12px 14px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                            <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{f.displayName}</span>
+                            <strong style={{ color: barColor(f.winRate) }}>{f.winRate}% ({f.wins}V/{f.losses}D)</strong>
+                          </div>
+                          {f.topPositive && <div style={{ fontSize: 12, color: "#4B6B4E", marginTop: 2 }}>✅ {f.topPositive}</div>}
+                          {f.topNegative && <div style={{ fontSize: 12, color: "#8A3F35", marginTop: 2 }}>⚠️ {f.topNegative}</div>}
+                          {!f.topPositive && !f.topNegative && <div style={{ fontSize: 12, color: "#8A8270", marginTop: 2 }}>Sem destaques claros ainda — amostra pequena no período.</div>}
                         </div>
                       ))}
                     </div>
@@ -4274,6 +4393,22 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       <div key={i} style={{ background: "#F6F1E1", borderRadius: 10, padding: "14px 16px", display: "flex", justifyContent: "space-between" }}>
                         <span style={{ fontSize: 15 }}>{d.deck}</span>
                         <strong style={{ fontSize: 15 }}>{d.winRate}% ({d.wins}/{d.total})</strong>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                {adminPlayerFeedback.length > 0 && reportCard("feedback", "Feedback por jogador", (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {adminPlayerFeedback.map((f) => (
+                      <div key={f.uid} style={{ background: "#F6F1E1", borderRadius: 10, padding: "14px 16px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16 }}>{f.displayName}</span>
+                          <strong style={{ fontSize: 15 }}>{f.winRate}% ({f.wins}V/{f.losses}D)</strong>
+                        </div>
+                        {f.topPositive && <div style={{ fontSize: 13, color: "#4B6B4E", marginTop: 2 }}>✅ {f.topPositive}</div>}
+                        {f.topNegative && <div style={{ fontSize: 13, color: "#8A3F35", marginTop: 2 }}>⚠️ {f.topNegative}</div>}
+                        {!f.topPositive && !f.topNegative && <div style={{ fontSize: 13, color: "#8A8270", marginTop: 2 }}>Sem destaques claros ainda — amostra pequena no período.</div>}
                       </div>
                     ))}
                   </div>
