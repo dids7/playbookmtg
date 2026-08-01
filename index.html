@@ -1948,6 +1948,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     let torneioId = form.torneioId || "";
     let rodadaToSave = form.rodada;
     let localToSave = form.local;
+    let dataToSave = form.data;
     let novoTorneioObj = null;
     const temTorneioAtivo = data.activeTournament && !data.activeTournament.dropped;
 
@@ -1956,6 +1957,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         torneioId = data.activeTournament.id;
         rodadaToSave = data.activeTournament.roundsPlayed + 1;
         localToSave = data.activeTournament.local;
+        dataToSave = data.activeTournament.data || form.data;
       } else {
         if (!form.local.trim()) {
           setSaving(false); setError("Preenche a loja / evento do torneio."); return;
@@ -1966,7 +1968,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         torneioId = uid();
         rodadaToSave = 1;
         localToSave = form.local.trim();
-        novoTorneioObj = { id: torneioId, local: localToSave, formato: form.formato, totalRounds: novoTorneioRodadas, roundsPlayed: 0, dropped: false };
+        dataToSave = form.data;
+        novoTorneioObj = { id: torneioId, local: localToSave, data: dataToSave, formato: form.formato, totalRounds: novoTorneioRodadas, roundsPlayed: 0, dropped: false };
       }
     }
 
@@ -1974,7 +1977,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       const matchPayload = {
         id: editingId || uid(), formato: form.formato, meuDeck: form.meuDeck.trim(), oponenteDeck: form.oponenteDeck.trim(),
         games: form.games, resultado: outcome.outcome, score: outcome.score,
-        tipo: form.tipo, local: form.tipo === "torneio" ? localToSave : form.local, data: form.data,
+        tipo: form.tipo, local: form.tipo === "torneio" ? localToSave : form.local, data: form.tipo === "torneio" ? dataToSave : form.data,
         rodada: form.tipo === "torneio" ? rodadaToSave : "",
         torneioId: form.tipo === "torneio" ? torneioId : "",
         colocacao: form.colocacao, nota: form.nota,
@@ -2283,12 +2286,22 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       });
       Object.values(byEvent).forEach((ev) => {
         const groupKey = ev.local + "|" + ev.data;
-        if (!grouped[groupKey]) grouped[groupKey] = { local: ev.local, data: ev.data, players: [] };
-        const record = ev.draws > 0 ? `${ev.wins}-${ev.losses}-${ev.draws}` : `${ev.wins}-${ev.losses}`;
-        grouped[groupKey].players.push({ displayName: p.displayName, colocacao: ev.colocacao || record });
+        if (!grouped[groupKey]) grouped[groupKey] = { local: ev.local, data: ev.data, playerTally: {} };
+        const tally = grouped[groupKey].playerTally;
+        if (!tally[p.displayName]) tally[p.displayName] = { wins: 0, losses: 0, draws: 0, colocacao: "" };
+        tally[p.displayName].wins += ev.wins;
+        tally[p.displayName].losses += ev.losses;
+        tally[p.displayName].draws += ev.draws;
+        if (ev.colocacao && !tally[p.displayName].colocacao) tally[p.displayName].colocacao = ev.colocacao;
       });
     });
-    return Object.values(grouped).sort((a, b) => b.data.localeCompare(a.data));
+    return Object.values(grouped).map((g) => ({
+      local: g.local, data: g.data,
+      players: Object.entries(g.playerTally).map(([displayName, t]) => ({
+        displayName,
+        colocacao: t.colocacao || (t.draws > 0 ? `${t.wins}-${t.losses}-${t.draws}` : `${t.wins}-${t.losses}`),
+      })),
+    })).sort((a, b) => b.data.localeCompare(a.data));
   }, [adminFilteredByPlayer]);
 
   const adminPeriodLabel = useMemo(() => {
@@ -2511,6 +2524,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13 }}>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>Torneio em andamento: {data.activeTournament.local}</div>
                 <div style={{ color: "#6E6656" }}>Rodada {data.activeTournament.roundsPlayed + 1} de {data.activeTournament.totalRounds}</div>
+                {data.activeTournament.data && (
+                  <div style={{ color: "#6E6656", marginTop: 2 }}>Data travada: {data.activeTournament.data.split("-").reverse().join("/")}</div>
+                )}
                 {confirmDropTournament ? (
                   <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                     <button onClick={handleDropTournament} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "none", background: "#8A3F35", color: "#EFE9D8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar drop</button>
@@ -2572,9 +2588,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 <input value={form.colocacao} onChange={(e) => updateField("colocacao", e.target.value)} placeholder="Ex: 3-1, Top 8" style={inputStyle} />
               </Field>
             )}
-            <Field label="Data">
-              <DatePicker value={form.data} onChange={(iso) => updateField("data", iso)} />
-            </Field>
+            {!(form.tipo === "torneio" && !editingId && data.activeTournament && !data.activeTournament.dropped) && (
+              <Field label="Data">
+                <DatePicker value={form.data} onChange={(iso) => updateField("data", iso)} />
+              </Field>
+            )}
             <Field label="Anotação (opcional)">
               <textarea value={form.nota} onChange={(e) => updateField("nota", e.target.value)} placeholder="Jogadas erradas, sideboard que funcionou..." rows={3} style={{ ...inputStyle, resize: "vertical" }} />
             </Field>
