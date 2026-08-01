@@ -823,7 +823,7 @@ function computeReportStats(matches) {
     .sort((a, b) => b.count - a.count);
 
   return {
-    matches, total, wins, losses, winRate, torneio, treino, play, draw,
+    matches, total, wins, losses, draws: total - wins - losses, winRate, torneio, treino, play, draw,
     matchupStats, bestMatchup, worstMatchups, mirrorMatches, mirrorWins, wonG1LostMatch,
     lossNotes, lossesWithMulligan, totalLosses,
     mullWinRateWith: mullWinRate(gamesWithMulligan), mullWinRateWithout: mullWinRate(gamesNoMulligan),
@@ -2108,7 +2108,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     const total = filteredMatches.length;
     const wins = filteredMatches.filter((m) => m.resultado === "vitoria").length;
     const losses = filteredMatches.filter((m) => m.resultado === "derrota").length;
-    return { total, wins, losses, winRate: total ? Math.round((wins / total) * 100) : 0 };
+    const draws = total - wins - losses;
+    return { total, wins, losses, draws, winRate: total ? Math.round((wins / total) * 100) : 0 };
   }, [filteredMatches]);
   const matchupStats = useMemo(() => {
     const byOpp = {};
@@ -3012,7 +3013,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>{statsDeck === "__all__" ? "Geral" : statsDeck}</div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
                     <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 44 }}>{overall.winRate}%</span>
-                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{overall.wins}V / {overall.losses}D em {overall.total} partidas</span>
+                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{overall.wins}V / {overall.losses}D{overall.draws > 0 ? ` / ${overall.draws}E` : ""} em {overall.total} partidas</span>
                   </div>
                 </div>
 
@@ -3129,7 +3130,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>Win rate</div>
                       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
                         <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 48 }}>{overall.winRate}%</span>
-                        <span style={{ fontSize: 14, color: "#C9C0A6" }}>{overall.wins}V / {overall.losses}D em {overall.total} partidas</span>
+                        <span style={{ fontSize: 14, color: "#C9C0A6" }}>{overall.wins}V / {overall.losses}D{overall.draws > 0 ? ` / ${overall.draws}E` : ""} em {overall.total} partidas</span>
                       </div>
                     </div>
 
@@ -3655,7 +3656,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>Win rate geral</div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
                     <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 44 }}>{monthlyReport.winRate}%</span>
-                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{monthlyReport.wins}V / {monthlyReport.losses}D em {monthlyReport.total} partidas</span>
+                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{monthlyReport.wins}V / {monthlyReport.losses}D{monthlyReport.draws > 0 ? ` / ${monthlyReport.draws}E` : ""} em {monthlyReport.total} partidas</span>
                   </div>
                   {monthlyReport.prevWinRate !== null && (
                     <div style={{ fontSize: 12, marginTop: 6, color: monthlyReport.winRate - monthlyReport.prevWinRate >= 0 ? "#8FBF8F" : "#E0A296" }}>
