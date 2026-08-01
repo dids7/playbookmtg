@@ -131,17 +131,28 @@ function emptyForm() {
   };
 }
 function matchOutcome(games) {
-  const played = games.filter((g) => g.resultado);
-  const wins = played.filter((g) => g.resultado === "vitoria").length;
-  const losses = played.filter((g) => g.resultado === "derrota").length;
-  if (wins >= 2) return { outcome: "vitoria", score: `${wins}-${losses}` };
-  if (losses >= 2) return { outcome: "derrota", score: `${wins}-${losses}` };
-  if (played.length === 3) return { outcome: "empate", score: `${wins}-${losses}` };
-  return { outcome: null, score: `${wins}-${losses}` };
+  let pontosA = 0, pontosB = 0;
+  for (const g of games) {
+    if (!g.resultado) break;
+    if (g.resultado === "vitoria") pontosA += 1;
+    else if (g.resultado === "derrota") pontosB += 1;
+    else if (g.resultado === "empate") { pontosA += 1; pontosB += 1; }
+
+    if (g.resultado === "empate") {
+      // Um empate de jogo (tempo esgotado) encerra a partida ali mesmo, sem precisar dos jogos seguintes.
+      if (pontosA > pontosB) return { outcome: "vitoria", score: `${pontosA}-${pontosB}` };
+      if (pontosB > pontosA) return { outcome: "derrota", score: `${pontosA}-${pontosB}` };
+      return { outcome: "empate", score: `${pontosA}-${pontosB}` };
+    }
+    if (pontosA >= 2) return { outcome: "vitoria", score: `${pontosA}-${pontosB}` };
+    if (pontosB >= 2) return { outcome: "derrota", score: `${pontosA}-${pontosB}` };
+  }
+  return { outcome: null, score: `${pontosA}-${pontosB}` };
 }
 function needsGame3(games) {
   const g1 = games[0], g2 = games[1];
   if (!g1.resultado || !g2.resultado) return false;
+  if (g1.resultado === "empate" || g2.resultado === "empate") return false;
   const wins = [g1, g2].filter((g) => g.resultado === "vitoria").length;
   const losses = [g1, g2].filter((g) => g.resultado === "derrota").length;
   return wins < 2 && losses < 2;
@@ -1902,8 +1913,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     if (!form.meuDeck.trim() || !form.oponenteDeck.trim()) {
       setSaving(false); setError("Preenche pelo menos seu deck e o deck do oponente."); return;
     }
-    if (!form.games[0].resultado || !form.games[1].resultado) {
-      setSaving(false); setError("Registra o resultado do Jogo 1 e do Jogo 2 pelo menos."); return;
+    if (!form.games[0].resultado) {
+      setSaving(false); setError("Registra o resultado do Jogo 1."); return;
+    }
+    if (form.games[0].resultado !== "empate" && !form.games[1].resultado) {
+      setSaving(false); setError("Registra o resultado do Jogo 2 (ou marca o Jogo 1 como empate se a rodada acabou ali)."); return;
     }
     if (needsGame3(form.games) && (form.games.length < 3 || !form.games[2].resultado)) {
       setSaving(false); setError("A partida está 1-1, registra o resultado do Jogo 3."); return;
@@ -2410,9 +2424,20 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             )}
 
             <GameRow label="Jogo 1" game={form.games[0]} onChange={(p) => updateGame(0, p)} />
-            <GameRow label="Jogo 2" game={form.games[1]} onChange={(p) => updateGame(1, p)} />
+            {form.games[0].resultado === "empate" ? (
+              <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13, color: "#2A2621" }}>
+                Empate no Jogo 1 encerra a partida ali (tempo esgotado) — não precisa registrar o Jogo 2.
+              </div>
+            ) : (
+              <GameRow label="Jogo 2" game={form.games[1]} onChange={(p) => updateGame(1, p)} />
+            )}
             {showGame3 && (
               <GameRow label="Jogo 3 (decisivo)" game={form.games[2] || emptyGame()} onChange={(p) => { if (form.games.length < 3) addGame3(); updateGame(2, p); }} />
+            )}
+            {form.games[0].resultado !== "empate" && form.games[1] && form.games[1].resultado === "empate" && (
+              <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13, color: "#2A2621" }}>
+                Empate no Jogo 2 encerra a partida ali (tempo esgotado) — não precisa registrar o Jogo 3.
+              </div>
             )}
 
             <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#6E6656", display: "flex", justifyContent: "space-between" }}>
