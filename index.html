@@ -1571,14 +1571,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   useEffect(() => {
     try { if (myRegiao) localStorage.setItem("playbook_regiao", myRegiao); else localStorage.removeItem("playbook_regiao"); } catch (e) {}
   }, [myRegiao]);
-  const [verTodasLojasRegistrar, setVerTodasLojasRegistrar] = useState(false);
   const regioesConhecidas = useMemo(() => {
     return Array.from(new Set(data.lojas.map((l) => l.regiao).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [data.lojas]);
   const lojasFiltradas = useMemo(() => {
-    if (!myRegiao || verTodasLojasRegistrar) return data.lojas;
+    if (!myRegiao) return data.lojas;
     return data.lojas.filter((l) => !l.regiao || l.regiao === myRegiao);
-  }, [data.lojas, myRegiao, verTodasLojasRegistrar]);
+  }, [data.lojas, myRegiao]);
 
   useEffect(() => {
     let matchesLoaded = false;
@@ -2768,19 +2767,15 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               )}
             </Field>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
               <input type="checkbox" id="byeCheckbox" checked={form.isBye} onChange={(e) => {
                 const checked = e.target.checked;
                 setForm((f) => ({ ...f, isBye: checked, oponenteDeck: checked ? "" : f.oponenteDeck, tipo: checked ? "torneio" : f.tipo }));
               }} style={{ width: 16, height: 16, cursor: "pointer" }} />
-              <label htmlFor="byeCheckbox" style={{ fontSize: 13, color: "#2A2621", cursor: "pointer" }}>Bye nessa rodada (sem oponente, ganho automático)</label>
+              <label htmlFor="byeCheckbox" style={{ fontSize: 13, color: "#2A2621", cursor: "pointer" }}>Bye</label>
             </div>
 
-            {form.isBye ? (
-              <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13, color: "#2A2621" }}>
-                O bye conta como vitória pra pontuação do torneio, mas fica marcado separado nas suas estatísticas (não entra no cálculo de matchup, mulligan, etc.).
-              </div>
-            ) : (
+            {!form.isBye && (
               <Field label="Deck do oponente">
                 {!form.formato ? (
                   <div style={{ fontSize: 13, color: "#8A3F35" }}>Escolhe o formato primeiro.</div>
@@ -2898,11 +2893,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     <option value="">Selecionar</option>
                     {lojasFiltradas.map((l) => <option key={l.nome} value={l.nome}>{l.nome}</option>)}
                   </select>
-                  {data.lojas.length === 0 ? (
+                  {data.lojas.length === 0 && (
                     <div style={{ fontSize: 12, color: "#8A8270", marginTop: 4 }}>Nenhuma loja cadastrada — peça pro dono do time cadastrar no Painel de Administração.</div>
-                  ) : myRegiao && !verTodasLojasRegistrar && lojasFiltradas.length < data.lojas.length ? (
-                    <div onClick={() => setVerTodasLojasRegistrar(true)} style={{ fontSize: 12, color: "#B15C3E", fontWeight: 700, marginTop: 4, cursor: "pointer" }}>Ver lojas de todas as regiões</div>
-                  ) : null}
+                  )}
                 </Field>
                 <Field label="Quantas rodadas tem o torneio?">
                   <QtyPicker
