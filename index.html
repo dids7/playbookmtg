@@ -82,7 +82,7 @@
     getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
   const {
-    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion, deleteDoc
+    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion, arrayRemove, deleteDoc
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
   const {
     getStorage, ref, uploadBytes, getDownloadURL, deleteObject
@@ -103,7 +103,7 @@
     provider: new GoogleAuthProvider(),
     db: getFirestore(app),
     storage: getStorage(app),
-    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion, deleteDoc,
+    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, updateDoc, increment, arrayUnion, arrayRemove, deleteDoc,
     ref, uploadBytes, getDownloadURL, deleteObject,
   };
   window.__fbReady = true;
@@ -423,6 +423,42 @@ async function deletePostFile(path) {
   } catch (e) {
     console.error("Erro ao apagar arquivo do Storage:", e);
   }
+}
+const EVENT_CATEGORIAS = {
+  grande: { label: "Grande evento", color: "#B08B3E" },
+  semanal: { label: "Semanal", color: "#3E6A8A" },
+  classificatorio: { label: "Classificatório CLM", color: "#8A3F35" },
+};
+
+function subscribeEvents(teamId, callback) {
+  const { db, collection, onSnapshot } = window.__fb;
+  const ref = collection(db, "teams", teamId, "events");
+  return onSnapshot(ref, (snap) => {
+    const list = [];
+    snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+    callback(list);
+  }, (err) => { console.error("Erro ao sincronizar agenda:", err); });
+}
+async function createEvent(teamId, evt) {
+  const { db, doc, collection, setDoc } = window.__fb;
+  const ref = doc(collection(db, "teams", teamId, "events"));
+  const now = Date.now();
+  await setDoc(ref, { ...evt, presencas: [], createdAt: now, updatedAt: now });
+  return ref.id;
+}
+async function updateEvent(teamId, eventId, patch) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "teams", teamId, "events", eventId);
+  await setDoc(ref, { ...patch, updatedAt: Date.now() }, { merge: true });
+}
+async function deleteEvent(teamId, eventId) {
+  const { db, doc, deleteDoc } = window.__fb;
+  await deleteDoc(doc(db, "teams", teamId, "events", eventId));
+}
+async function togglePresenca(teamId, eventId, uidStr, indo) {
+  const { db, doc, setDoc, arrayUnion, arrayRemove } = window.__fb;
+  const ref = doc(db, "teams", teamId, "events", eventId);
+  await setDoc(ref, { presencas: indo ? arrayUnion(uidStr) : arrayRemove(uidStr) }, { merge: true });
 }
 async function fetchTeamMembers(teamId) {
   const { db, collection, getDocs } = window.__fb;
@@ -1340,6 +1376,17 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [teamPlayers, setTeamPlayers] = useState([]);
   const [selectedPlayerUid, setSelectedPlayerUid] = useState(null);
   const [jogadoresSubTab, setJogadoresSubTab] = useState("jogadores"); // jogadores | mural
+  const [events, setEvents] = useState([]);
+  const [agendaMonthCursor, setAgendaMonthCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+  const [agendaLegendOpen, setAgendaLegendOpen] = useState(false);
+  const [agendaFormOpen, setAgendaFormOpen] = useState(false);
+  const [agendaEditingId, setAgendaEditingId] = useState(null);
+  const [agendaForm, setAgendaForm] = useState(null);
+  const [agendaDatePickerOpen, setAgendaDatePickerOpen] = useState(false);
+  const [agendaPickerMonthCursor, setAgendaPickerMonthCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+  const [agendaError, setAgendaError] = useState("");
+  const [agendaSaving, setAgendaSaving] = useState(false);
+  const [confirmDeleteEventId, setConfirmDeleteEventId] = useState(null);
   const [posts, setPosts] = useState([]);
   const [teamMembersList, setTeamMembersList] = useState([]);
   const [postForm, setPostForm] = useState(null); // null = fechado
@@ -1506,6 +1553,24 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   }, [team.teamId]);
 
   useEffect(() => {
+    const unsubscribe = subscribeEvents(team.teamId, (list) => setEvents(list));
+    return () => unsubscribe();
+  }, [team.teamId]);
+
+  const sortedEvents = useMemo(() => {
+    const today = todayISO();
+    return [...events]
+      .filter((e) => e.dates && e.dates.length > 0)
+      .map((e) => {
+        const sortedDates = [...e.dates].sort();
+        const nextDate = sortedDates.find((d) => d >= today) || sortedDates[sortedDates.length - 1];
+        const isPast = sortedDates[sortedDates.length - 1] < today;
+        return { ...e, sortedDates, nextDate, isPast };
+      })
+      .sort((a, b) => a.nextDate.localeCompare(b.nextDate));
+  }, [events]);
+
+  useEffect(() => {
     (async () => {
       try {
         const v = await loadOwnVisibility(team.teamId, user.uid);
@@ -1649,6 +1714,92 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   }
   function canDeletePost(post) {
     return post.autorUid === user.uid || isTeamOwner;
+  }
+
+  function getMonthGrid(year, month) {
+    const firstDay = new Date(year, month, 1);
+    const startWeekday = firstDay.getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < startWeekday; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      cells.push(`${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+    }
+    return cells;
+  }
+  function monthLabelFull(year, month) {
+    const names = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+    return `${names[month]} ${year}`;
+  }
+  function eventsOnDate(iso) {
+    return events.filter((e) => (e.dates || []).includes(iso));
+  }
+  function dayBackgroundStyle(cats) {
+    const colors = Array.from(new Set(cats.map((c) => (EVENT_CATEGORIAS[c] || {}).color).filter(Boolean)));
+    if (colors.length === 0) return {};
+    if (colors.length === 1) return { background: colors[0] };
+    const slice = 100 / colors.length;
+    const stops = colors.map((c, i) => `${c} ${i * slice}% ${(i + 1) * slice}%`).join(", ");
+    return { background: `conic-gradient(${stops})` };
+  }
+
+  function openNewEventForm() {
+    setAgendaForm({ titulo: "", categoria: "grande", local: "", descricao: "", dates: [] });
+    setAgendaEditingId(null);
+    setAgendaError("");
+    setAgendaFormOpen(true);
+  }
+  function openEditEventForm(evt) {
+    setAgendaForm({ titulo: evt.titulo, categoria: evt.categoria, local: evt.local || "", descricao: evt.descricao || "", dates: [...(evt.dates || [])] });
+    setAgendaEditingId(evt.id);
+    setAgendaError("");
+    setAgendaFormOpen(true);
+  }
+  function toggleAgendaDate(iso) {
+    setAgendaForm((f) => {
+      const has = f.dates.includes(iso);
+      return { ...f, dates: has ? f.dates.filter((d) => d !== iso) : [...f.dates, iso].sort() };
+    });
+  }
+  async function handleSaveEvent() {
+    setAgendaError("");
+    if (!agendaForm.titulo.trim()) { setAgendaError("Escreve um título."); return; }
+    if (agendaForm.dates.length === 0) { setAgendaError("Seleciona pelo menos uma data."); return; }
+    setAgendaSaving(true);
+    try {
+      const payload = {
+        titulo: agendaForm.titulo.trim(), categoria: agendaForm.categoria, local: agendaForm.local.trim(),
+        descricao: agendaForm.descricao.trim(), dates: agendaForm.dates,
+      };
+      if (agendaEditingId) {
+        await updateEvent(team.teamId, agendaEditingId, payload);
+      } else {
+        await createEvent(team.teamId, { ...payload, autorUid: user.uid, autorNome: user.displayName || user.email });
+      }
+      setAgendaFormOpen(false);
+      setAgendaForm(null);
+      setAgendaEditingId(null);
+    } catch (e) {
+      setAgendaError("Não consegui salvar: " + (e && e.message ? e.message : "erro desconhecido"));
+    } finally {
+      setAgendaSaving(false);
+    }
+  }
+  async function handleDeleteEvent(eventId) {
+    setConfirmDeleteEventId(null);
+    try {
+      await deleteEvent(team.teamId, eventId);
+    } catch (e) {
+      setError("Não consegui apagar o evento: " + (e && e.message ? e.message : "erro"));
+    }
+  }
+  async function handleTogglePresenca(evt) {
+    const indo = !(evt.presencas || []).includes(user.uid);
+    try {
+      await togglePresenca(team.teamId, evt.id, user.uid, indo);
+    } catch (e) {
+      setError("Não consegui atualizar sua presença: " + (e && e.message ? e.message : "erro"));
+    }
   }
 
   async function handleBackupTeam() {
@@ -3538,6 +3689,216 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             >
               {userTeams && userTeams.length > 1 ? "Trocar de time" : "Entrar em outro time"}
             </button>
+
+            <SectionLabel>Agenda</SectionLabel>
+            <div style={{ background: "#F6F1E1", borderRadius: 12, padding: 14, marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <button onClick={() => setAgendaMonthCursor((c) => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
+                  style={{ border: "none", background: "transparent", cursor: "pointer", padding: 4 }}>
+                  <i className="ti ti-chevron-left" style={{ fontSize: 18, color: "#8A8270" }}></i>
+                </button>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{monthLabelFull(agendaMonthCursor.year, agendaMonthCursor.month)}</div>
+                <button onClick={() => setAgendaMonthCursor((c) => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
+                  style={{ border: "none", background: "transparent", cursor: "pointer", padding: 4 }}>
+                  <i className="ti ti-chevron-right" style={{ fontSize: 18, color: "#8A8270" }}></i>
+                </button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, textAlign: "center", marginBottom: 2 }}>
+                {["D", "S", "T", "Q", "Q", "S", "S"].map((d, i) => <div key={i} style={{ fontSize: 10, color: "#8A8270" }}>{d}</div>)}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, textAlign: "center" }}>
+                {getMonthGrid(agendaMonthCursor.year, agendaMonthCursor.month).map((iso, i) => {
+                  if (!iso) return <div key={i} />;
+                  const dayNum = parseInt(iso.split("-")[2], 10);
+                  const isToday = iso === todayISO();
+                  const cats = eventsOnDate(iso).map((e) => e.categoria);
+                  const bg = dayBackgroundStyle(cats);
+                  return (
+                    <div key={i} style={{
+                      fontSize: 12, padding: "6px 0", borderRadius: "50%",
+                      border: isToday ? "1.5px solid #2A2621" : "none",
+                      fontWeight: (isToday || cats.length > 0) ? 700 : 400,
+                      color: cats.length > 0 ? "#EFE9D8" : "#2A2621",
+                      ...bg,
+                    }}>{dayNum}</div>
+                  );
+                })}
+              </div>
+
+              <div onClick={() => setAgendaLegendOpen((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, cursor: "pointer" }}>
+                <span style={{ fontSize: 12, color: "#6E6656", fontWeight: 500 }}>Legenda</span>
+                <i className={agendaLegendOpen ? "ti ti-chevron-up" : "ti ti-chevron-down"} style={{ fontSize: 14, color: "#6E6656" }}></i>
+              </div>
+              {agendaLegendOpen && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #C9C0A6" }}>
+                  {Object.entries(EVENT_CATEGORIAS).map(([key, cat]) => {
+                    const evtsForCat = events.filter((e) => e.categoria === key);
+                    if (evtsForCat.length === 0) return null;
+                    return (
+                      <div key={key} style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: cat.color, fontWeight: 700, marginBottom: 4 }}>{cat.label}</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {evtsForCat.map((e) => (
+                            <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#6E6656" }}>
+                              <span style={{ width: 9, height: 9, borderRadius: "50%", background: cat.color, flexShrink: 0 }} />
+                              {e.titulo}{e.local ? ` · ${e.local}` : ""}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {events.length === 0 && <div style={{ fontSize: 12, color: "#8A8270" }}>Nenhum evento cadastrado ainda.</div>}
+                </div>
+              )}
+            </div>
+
+            {isTeamOwner && !agendaFormOpen && (
+              <button onClick={openNewEventForm} style={{ width: "100%", border: "none", background: "#2A2621", color: "#EFE9D8", borderRadius: 8, padding: "10px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 20 }}>
+                + Novo evento
+              </button>
+            )}
+
+            {agendaFormOpen && agendaForm && (
+              <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{agendaEditingId ? "Editar evento" : "Novo evento"}</div>
+
+                <Field label="Título">
+                  <input value={agendaForm.titulo} onChange={(e) => setAgendaForm((f) => ({ ...f, titulo: e.target.value }))} style={inputStyle} placeholder="Ex: Classificatório CLM" />
+                </Field>
+
+                <Field label="Categoria">
+                  <select value={agendaForm.categoria} onChange={(e) => setAgendaForm((f) => ({ ...f, categoria: e.target.value }))} style={inputStyle}>
+                    {Object.entries(EVENT_CATEGORIAS).map(([key, cat]) => <option key={key} value={key}>{cat.label}</option>)}
+                  </select>
+                </Field>
+
+                <Field label="Datas">
+                  <button onClick={() => setAgendaDatePickerOpen((v) => !v)} style={{
+                    width: "100%", textAlign: "left", background: "#EFE9D8", border: "1px solid #B15C3E", borderRadius: 8, padding: "10px 12px",
+                    fontSize: 14, color: "#B15C3E", fontWeight: 700, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}>
+                    {agendaForm.dates.length === 0 ? "Selecionar datas" : `${agendaForm.dates.length} data${agendaForm.dates.length !== 1 ? "s" : ""} selecionada${agendaForm.dates.length !== 1 ? "s" : ""}`}
+                    <i className="ti ti-calendar" style={{ fontSize: 16 }}></i>
+                  </button>
+                </Field>
+
+                {agendaDatePickerOpen && (
+                  <div style={{ border: "1px solid #C9C0A6", borderRadius: 10, padding: 12, marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 8 }}>Toque nos dias que têm esse evento</div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <button onClick={() => setAgendaPickerMonthCursor((c) => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
+                        style={{ border: "none", background: "transparent", cursor: "pointer", padding: 4 }}>
+                        <i className="ti ti-chevron-left" style={{ fontSize: 16, color: "#8A8270" }}></i>
+                      </button>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{monthLabelFull(agendaPickerMonthCursor.year, agendaPickerMonthCursor.month)}</div>
+                      <button onClick={() => setAgendaPickerMonthCursor((c) => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
+                        style={{ border: "none", background: "transparent", cursor: "pointer", padding: 4 }}>
+                        <i className="ti ti-chevron-right" style={{ fontSize: 16, color: "#8A8270" }}></i>
+                      </button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, textAlign: "center", marginBottom: 2 }}>
+                      {["D", "S", "T", "Q", "Q", "S", "S"].map((d, i) => <div key={i} style={{ fontSize: 10, color: "#8A8270" }}>{d}</div>)}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, textAlign: "center" }}>
+                      {getMonthGrid(agendaPickerMonthCursor.year, agendaPickerMonthCursor.month).map((iso, i) => {
+                        if (!iso) return <div key={i} />;
+                        const dayNum = parseInt(iso.split("-")[2], 10);
+                        const selected = agendaForm.dates.includes(iso);
+                        return (
+                          <div key={i} onClick={() => toggleAgendaDate(iso)} style={{
+                            fontSize: 12, padding: "6px 0", borderRadius: "50%", cursor: "pointer",
+                            background: selected ? EVENT_CATEGORIAS[agendaForm.categoria].color : "transparent",
+                            color: selected ? "#EFE9D8" : "#2A2621", fontWeight: selected ? 700 : 400,
+                          }}>{dayNum}</div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ textAlign: "right", marginTop: 10 }}>
+                      <button onClick={() => setAgendaDatePickerOpen(false)} style={{ border: "none", background: "#2A2621", color: "#EFE9D8", borderRadius: 6, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        Confirmar datas
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <Field label="Local">
+                  <input value={agendaForm.local} onChange={(e) => setAgendaForm((f) => ({ ...f, local: e.target.value }))} style={inputStyle} placeholder="Ex: Polar Jogos, São Paulo" />
+                </Field>
+
+                <Field label="Descrição (opcional)">
+                  <textarea value={agendaForm.descricao} onChange={(e) => setAgendaForm((f) => ({ ...f, descricao: e.target.value }))}
+                    rows={3} style={{ ...inputStyle, width: "100%", resize: "vertical" }} placeholder="Ex: 5 rodadas suíças + Top 8" />
+                </Field>
+
+                {agendaError && <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "8px 10px", fontSize: 12, marginBottom: 10 }}>{agendaError}</div>}
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={handleSaveEvent} disabled={agendaSaving} style={{ flex: 1, padding: "9px 0", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 13, cursor: agendaSaving ? "default" : "pointer", opacity: agendaSaving ? 0.6 : 1 }}>
+                    {agendaSaving ? "Salvando…" : "Salvar evento"}
+                  </button>
+                  <button onClick={() => { setAgendaFormOpen(false); setAgendaForm(null); setAgendaEditingId(null); setAgendaDatePickerOpen(false); }} style={{ padding: "9px 14px", borderRadius: 6, border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <SectionLabel>Próximos eventos</SectionLabel>
+            <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
+              {sortedEvents.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhum evento cadastrado ainda.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {sortedEvents.map((evt) => {
+                    const cat = EVENT_CATEGORIAS[evt.categoria] || EVENT_CATEGORIAS.grande;
+                    const indo = (evt.presencas || []).includes(user.uid);
+                    const [ny, nm, nd] = evt.nextDate.split("-");
+                    return (
+                      <div key={evt.id} style={{ background: "#EFE9D8", borderRadius: 10, padding: 12, opacity: evt.isPast ? 0.6 : 1 }}>
+                        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                          <div style={{ background: cat.color, color: "#EFE9D8", borderRadius: 8, padding: "6px 8px", textAlign: "center", minWidth: 40, flexShrink: 0 }}>
+                            <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1 }}>{nd}</div>
+                            <div style={{ fontSize: 9, textTransform: "uppercase" }}>{["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"][parseInt(nm, 10) - 1]}</div>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>{evt.titulo}{evt.isPast ? " (encerrado)" : ""}</div>
+                            <div style={{ fontSize: 12, color: "#6E6656" }}>
+                              {evt.local ? `${evt.local} · ` : ""}{evt.sortedDates.length} data{evt.sortedDates.length !== 1 ? "s" : ""}
+                            </div>
+                          </div>
+                          {!evt.isPast && (
+                            <button onClick={() => handleTogglePresenca(evt)} style={{
+                              border: `1px solid ${indo ? "#4B6B4E" : "#B15C3E"}`, background: indo ? "#4B6B4E" : "transparent",
+                              color: indo ? "#EFE9D8" : "#B15C3E", borderRadius: 14, padding: "5px 10px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap", cursor: "pointer",
+                            }}>
+                              {indo ? "Vou ✓" : "Eu vou"}
+                            </button>
+                          )}
+                        </div>
+                        {evt.descricao && <div style={{ fontSize: 12, color: "#6E6656", marginTop: 8 }}>{evt.descricao}</div>}
+                        {(evt.presencas || []).length > 0 && (
+                          <div style={{ fontSize: 11, color: "#8A8270", marginTop: 6 }}>{evt.presencas.length} confirmado{evt.presencas.length !== 1 ? "s" : ""}</div>
+                        )}
+                        {isTeamOwner && (
+                          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                            <button onClick={() => openEditEventForm(evt)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#2A2621", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Editar</button>
+                            {confirmDeleteEventId === evt.id ? (
+                              <>
+                                <button onClick={() => handleDeleteEvent(evt.id)} style={{ border: "none", background: "#8A3F35", color: "#EFE9D8", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Confirmar apagar</button>
+                                <button onClick={() => setConfirmDeleteEventId(null)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                              </>
+                            ) : (
+                              <button onClick={() => setConfirmDeleteEventId(evt.id)} style={{ border: "1px solid #8A3F35", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Apagar</button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             <SectionLabel>Meus decks favoritos</SectionLabel>
             <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
