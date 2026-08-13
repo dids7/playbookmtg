@@ -446,6 +446,29 @@ function subscribeEvents(teamId, callback) {
     callback(list);
   }, (err) => { console.error("Erro ao sincronizar agenda:", err); });
 }
+function parseEventImportText(text) {
+  const validCategorias = Object.keys(EVENT_CATEGORIAS);
+  const lines = text.split(/\r?\n/);
+  const eventos = [];
+  const erros = [];
+  lines.forEach((rawLine, i) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("//") || line.startsWith("#")) return;
+    const parts = line.split("|").map((p) => p.trim());
+    if (parts.length < 5) { erros.push(`Linha ${i + 1}: precisa de 5 campos separados por "|" (título | categoria | local | região | datas).`); return; }
+    const [titulo, categoria, local, regiao, datasStr] = parts;
+    if (!titulo) { erros.push(`Linha ${i + 1}: título vazio.`); return; }
+    if (!validCategorias.includes(categoria)) { erros.push(`Linha ${i + 1}: categoria "${categoria}" inválida (use ${validCategorias.join(", ")}).`); return; }
+    const dates = datasStr.split(",").map((d) => d.trim()).filter(Boolean).map((d) => {
+      const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (!m) return null;
+      return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    });
+    if (dates.length === 0 || dates.some((d) => !d)) { erros.push(`Linha ${i + 1}: datas inválidas (use dd/mm/aaaa separadas por vírgula).`); return; }
+    eventos.push({ titulo, categoria, local, regiao, dates });
+  });
+  return { eventos, erros };
+}
 async function createEvent(teamId, evt) {
   const { db, doc, collection, setDoc } = window.__fb;
   const ref = doc(collection(db, "teams", teamId, "events"));
@@ -1406,6 +1429,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [agendaError, setAgendaError] = useState("");
   const [agendaSaving, setAgendaSaving] = useState(false);
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState(null);
+  const [importEventsOpen, setImportEventsOpen] = useState(false);
+  const [importEventsText, setImportEventsText] = useState("");
+  const [importEventsError, setImportEventsError] = useState("");
+  const [importEventsLoading, setImportEventsLoading] = useState(false);
+  const [importEventsResult, setImportEventsResult] = useState(null);
   const [posts, setPosts] = useState([]);
   const [teamMembersList, setTeamMembersList] = useState([]);
   const [postForm, setPostForm] = useState(null); // null = fechado
@@ -1821,6 +1849,29 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     } finally {
       setAgendaSaving(false);
     }
+  }
+  async function handleImportEvents() {
+    setImportEventsError("");
+    setImportEventsResult(null);
+    const { eventos, erros } = parseEventImportText(importEventsText);
+    if (erros.length > 0) { setImportEventsError(erros.join(" ")); return; }
+    if (eventos.length === 0) { setImportEventsError("Nenhum evento reconhecido nesse texto."); return; }
+    setImportEventsLoading(true);
+    let ok = 0, fail = 0;
+    for (const evt of eventos) {
+      try {
+        await createEvent(team.teamId, {
+          titulo: evt.titulo, categoria: evt.categoria, local: evt.local, regiao: evt.regiao,
+          descricao: "", dates: evt.dates, autorUid: user.uid, autorNome: user.displayName || user.email,
+        });
+        ok += 1;
+      } catch (e) {
+        fail += 1;
+      }
+    }
+    setImportEventsLoading(false);
+    setImportEventsResult({ ok, fail });
+    if (fail === 0) setImportEventsText("");
   }
   async function handleDeleteEvent(eventId) {
     setConfirmDeleteEventId(null);
@@ -4472,6 +4523,34 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       <button onClick={() => handleRemoveLoja(l.nome)} style={{ border: "none", background: "none", color: "#8A3F35", fontWeight: 700, cursor: "pointer", padding: 0, fontSize: 13 }}>×</button>
                     </span>
                   ))}
+                </div>
+              )}
+            </div>
+
+            <SectionLabel>Importar eventos da agenda</SectionLabel>
+            <div style={{ background: "#F6F1E1", borderRadius: 10, padding: 14, marginBottom: 20 }}>
+              <div onClick={() => setImportEventsOpen((v) => !v)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+                <div style={{ fontSize: 13, color: "#6E6656" }}>Cola uma lista e cria vários eventos de uma vez.</div>
+                <span style={{ fontSize: 11, color: "#6E6656" }}>{importEventsOpen ? "▲" : "▼"}</span>
+              </div>
+              {importEventsOpen && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 8 }}>
+                    Um evento por linha: <code>título | categoria | local | região | datas</code> — categoria é <code>grande</code>, <code>semanal</code> ou <code>classificatorio</code>; datas em dd/mm/aaaa separadas por vírgula.
+                  </div>
+                  <textarea value={importEventsText} onChange={(e) => setImportEventsText(e.target.value)}
+                    rows={8} style={{ ...inputStyle, width: "100%", resize: "vertical", fontFamily: "monospace", fontSize: 11 }}
+                    placeholder={"Pauper semanal - Polar Jogos | semanal | Polar Jogos | São Paulo | 19/08/2026,26/08/2026\nFinal do CLM | grande |  |  | 12/12/2026,13/12/2026"} />
+                  {importEventsError && <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "8px 10px", fontSize: 12, marginTop: 8 }}>{importEventsError}</div>}
+                  {importEventsResult && (
+                    <div style={{ background: importEventsResult.fail === 0 ? "#E4EDE3" : "#F2E1DC", borderLeft: `4px solid ${importEventsResult.fail === 0 ? "#4B6B4E" : "#8A3F35"}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, marginTop: 8 }}>
+                      {importEventsResult.ok} evento{importEventsResult.ok !== 1 ? "s" : ""} criado{importEventsResult.ok !== 1 ? "s" : ""}{importEventsResult.fail > 0 ? `, ${importEventsResult.fail} falharam` : ""}.
+                    </div>
+                  )}
+                  <button onClick={handleImportEvents} disabled={importEventsLoading || !importEventsText.trim()} style={{
+                    width: "100%", marginTop: 10, padding: "10px 0", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8",
+                    fontWeight: 700, cursor: importEventsLoading ? "default" : "pointer", opacity: (importEventsLoading || !importEventsText.trim()) ? 0.6 : 1,
+                  }}>{importEventsLoading ? "Importando…" : "Importar eventos"}</button>
                 </div>
               )}
             </div>
