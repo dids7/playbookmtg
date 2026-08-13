@@ -3968,36 +3968,33 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               {sortedEvents.length === 0 ? (
                 <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhum evento cadastrado ainda.</div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {sortedEvents.slice(0, agendaEventosVisiveis).map((evt) => {
                     const cat = EVENT_CATEGORIAS[evt.categoria] || EVENT_CATEGORIAS.grande;
                     const indo = (evt.presencas || []).includes(user.uid);
                     const [ny, nm, nd] = evt.nextDate.split("-");
                     return (
-                      <div key={evt.id} style={{ background: "#EFE9D8", borderRadius: 10, padding: 12, opacity: evt.isPast ? 0.6 : 1 }}>
-                        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                          <div style={{ background: cat.color, color: "#EFE9D8", borderRadius: 8, padding: "6px 8px", textAlign: "center", minWidth: 40, flexShrink: 0 }}>
-                            <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1 }}>{nd}</div>
-                            <div style={{ fontSize: 9, textTransform: "uppercase" }}>{["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"][parseInt(nm, 10) - 1]}</div>
+                      <div key={evt.id} style={{ background: "#EFE9D8", borderRadius: 10, padding: "8px 10px", opacity: evt.isPast ? 0.6 : 1 }}>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                          <div style={{ background: cat.color, color: "#EFE9D8", borderRadius: 6, padding: "4px 6px", textAlign: "center", minWidth: 32, flexShrink: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1 }}>{nd}</div>
+                            <div style={{ fontSize: 8, textTransform: "uppercase" }}>{["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"][parseInt(nm, 10) - 1]}</div>
                           </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 700, fontSize: 14 }}>{evt.titulo}{evt.isPast ? " (encerrado)" : ""}</div>
-                            <div style={{ fontSize: 12, color: "#6E6656" }}>
-                              {evt.local ? `${evt.local} · ` : ""}{evt.sortedDates.length} data{evt.sortedDates.length !== 1 ? "s" : ""}
-                            </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13 }}>{evt.titulo}{evt.isPast ? " (encerrado)" : ""}</div>
                           </div>
                           {!evt.isPast && (
                             <button onClick={() => handleTogglePresenca(evt)} style={{
                               border: `1px solid ${indo ? "#4B6B4E" : "#B15C3E"}`, background: indo ? "#4B6B4E" : "transparent",
-                              color: indo ? "#EFE9D8" : "#B15C3E", borderRadius: 14, padding: "5px 10px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap", cursor: "pointer",
+                              color: indo ? "#EFE9D8" : "#B15C3E", borderRadius: 14, padding: "4px 8px", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", cursor: "pointer",
                             }}>
                               {indo ? "Vou ✓" : "Eu vou"}
                             </button>
                           )}
                         </div>
-                        {evt.descricao && <div style={{ fontSize: 12, color: "#6E6656", marginTop: 8 }}>{evt.descricao}</div>}
+                        {evt.descricao && <div style={{ fontSize: 12, color: "#6E6656", marginTop: 6 }}>{evt.descricao}</div>}
                         {(evt.presencas || []).length > 0 && (
-                          <div style={{ fontSize: 11, color: "#8A8270", marginTop: 6 }}>{evt.presencas.length} confirmado{evt.presencas.length !== 1 ? "s" : ""}</div>
+                          <div style={{ fontSize: 11, color: "#8A8270", marginTop: 4 }}>{evt.presencas.length} confirmado{evt.presencas.length !== 1 ? "s" : ""}</div>
                         )}
                         {isTeamOwner && (
                           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
