@@ -3726,7 +3726,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   const bg = dayBackgroundStyle(cats);
                   return (
                     <div key={i} style={{
-                      fontSize: 12, padding: "6px 0", borderRadius: "50%",
+                      width: 28, height: 28, margin: "0 auto",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 12, borderRadius: "50%", boxSizing: "border-box",
                       border: isToday ? "1.5px solid #2A2621" : "none",
                       fontWeight: (isToday || cats.length > 0) ? 700 : 400,
                       color: cats.length > 0 ? "#EFE9D8" : "#2A2621",
@@ -3818,7 +3820,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                         const selected = agendaForm.dates.includes(iso);
                         return (
                           <div key={i} onClick={() => toggleAgendaDate(iso)} style={{
-                            fontSize: 12, padding: "6px 0", borderRadius: "50%", cursor: "pointer",
+                            width: 28, height: 28, margin: "0 auto",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 12, borderRadius: "50%", boxSizing: "border-box", cursor: "pointer",
                             background: selected ? EVENT_CATEGORIAS[agendaForm.categoria].color : "transparent",
                             color: selected ? "#EFE9D8" : "#2A2621", fontWeight: selected ? 700 : 400,
                           }}>{dayNum}</div>
