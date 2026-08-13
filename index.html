@@ -291,7 +291,13 @@ const DEFAULT_DECKS_BY_FORMATO = {
   "Duel Commander 500": DEFAULT_DUEL500_DECKS,
   "Duel Commander": DEFAULT_DUEL_COMMANDER_DECKS,
 };
-const DEFAULT_LOJAS = ["Polar Jogos", "Cross Guild", "Ludenz", "Mont", "Bazar de Bagda"];
+const DEFAULT_LOJAS = [
+  { nome: "Polar Jogos", regiao: "São Paulo" },
+  { nome: "Cross Guild", regiao: "São Paulo" },
+  { nome: "Ludenz", regiao: "São Paulo" },
+  { nome: "Mont", regiao: "Campinas" },
+  { nome: "Bazar de Bagda", regiao: "São Paulo" },
+];
 
 async function seedDefaultDecksIfNeeded(teamId, decks) {
   const { db, doc, setDoc } = window.__fb;
@@ -330,7 +336,8 @@ function subscribeSharedCatalog(teamId, callback) {
       const d = snap.data();
       const decksRaw = d.decks || [];
       const decks = decksRaw.map((dk) => (typeof dk === "string" ? { name: dk, formato: "" } : dk));
-      const lojas = d.lojas || [];
+      const lojasRaw = d.lojas || [];
+      const lojas = lojasRaw.map((l) => (typeof l === "string" ? { nome: l, regiao: "" } : l));
       callback({ decks, lojas });
     } else {
       callback({ decks: [], lojas: [] });
@@ -1373,6 +1380,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [newDeckName, setNewDeckName] = useState("");
   const [newDeckCategoria, setNewDeckCategoria] = useState("");
   const [newLojaNome, setNewLojaNome] = useState("");
+  const [newLojaRegiao, setNewLojaRegiao] = useState("");
   const [deckFormatoFilter, setDeckFormatoFilter] = useState("");
   const [deckError, setDeckError] = useState("");
   const [ownedDecks, setOwnedDecks] = useState([]);
@@ -1527,6 +1535,18 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   }
 
   const isTeamOwner = team && team.ownerUid === user.uid;
+  const [myRegiao, setMyRegiao] = useState(() => { try { return localStorage.getItem("playbook_regiao") || ""; } catch (e) { return ""; } });
+  useEffect(() => {
+    try { if (myRegiao) localStorage.setItem("playbook_regiao", myRegiao); else localStorage.removeItem("playbook_regiao"); } catch (e) {}
+  }, [myRegiao]);
+  const [verTodasLojasRegistrar, setVerTodasLojasRegistrar] = useState(false);
+  const regioesConhecidas = useMemo(() => {
+    return Array.from(new Set(data.lojas.map((l) => l.regiao).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [data.lojas]);
+  const lojasFiltradas = useMemo(() => {
+    if (!myRegiao || verTodasLojasRegistrar) return data.lojas;
+    return data.lojas.filter((l) => !l.regiao || l.regiao === myRegiao);
+  }, [data.lojas, myRegiao, verTodasLojasRegistrar]);
 
   useEffect(() => {
     let matchesLoaded = false;
@@ -1534,7 +1554,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     const checkDone = () => { if (matchesLoaded && catalogLoaded) setLoading(false); };
 
     const unsubscribe = subscribeSharedCatalog(team.teamId, ({ decks, lojas }) => {
-      setData((prev) => ({ ...prev, decks, lojas: [...lojas].sort((a, b) => a.localeCompare(b)) }));
+      setData((prev) => ({ ...prev, decks, lojas: [...lojas].sort((a, b) => a.nome.localeCompare(b.nome)) }));
       catalogLoaded = true;
       checkDone();
     });
@@ -1568,9 +1588,14 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     return () => unsubscribe();
   }, [team.teamId]);
 
+  const [verTodasAgenda, setVerTodasAgenda] = useState(false);
+  const visibleEvents = useMemo(() => {
+    if (!myRegiao || verTodasAgenda) return events;
+    return events.filter((e) => !e.regiao || e.regiao === myRegiao);
+  }, [events, myRegiao, verTodasAgenda]);
   const sortedEvents = useMemo(() => {
     const today = todayISO();
-    return [...events]
+    return [...visibleEvents]
       .filter((e) => e.dates && e.dates.length > 0)
       .map((e) => {
         const sortedDates = [...e.dates].sort();
@@ -1579,7 +1604,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         return { ...e, sortedDates, nextDate, isPast };
       })
       .sort((a, b) => a.nextDate.localeCompare(b.nextDate));
-  }, [events]);
+  }, [visibleEvents]);
 
   useEffect(() => {
     (async () => {
@@ -1640,14 +1665,15 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       return false;
     }
   }
-  async function handleAddLoja(nome) {
+  async function handleAddLoja(nome, regiao) {
     const trimmed = (nome || "").trim();
+    const regiaoTrimmed = (regiao || "").trim();
     if (!trimmed) return;
-    if (data.lojas.includes(trimmed)) return;
-    await persistLojas([...data.lojas, trimmed].sort((a, b) => a.localeCompare(b)));
+    if (data.lojas.some((l) => l.nome === trimmed)) return;
+    await persistLojas([...data.lojas, { nome: trimmed, regiao: regiaoTrimmed }].sort((a, b) => a.nome.localeCompare(b.nome)));
   }
   async function handleRemoveLoja(nome) {
-    await persistLojas(data.lojas.filter((l) => l !== nome));
+    await persistLojas(data.lojas.filter((l) => l.nome !== nome));
   }
 
   function openNewPostForm(tipo) {
@@ -1743,7 +1769,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     return `${names[month]} ${year}`;
   }
   function eventsOnDate(iso) {
-    return events.filter((e) => (e.dates || []).includes(iso));
+    return visibleEvents.filter((e) => (e.dates || []).includes(iso));
   }
   function dayBackgroundStyle(cats) {
     const colors = Array.from(new Set(cats.map((c) => (EVENT_CATEGORIAS[c] || {}).color).filter(Boolean)));
@@ -1755,13 +1781,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   }
 
   function openNewEventForm() {
-    setAgendaForm({ titulo: "", categoria: "grande", local: "", descricao: "", dates: [] });
+    setAgendaForm({ titulo: "", categoria: "grande", local: "", regiao: myRegiao || "", descricao: "", dates: [] });
     setAgendaEditingId(null);
     setAgendaError("");
     setAgendaFormOpen(true);
   }
   function openEditEventForm(evt) {
-    setAgendaForm({ titulo: evt.titulo, categoria: evt.categoria, local: evt.local || "", descricao: evt.descricao || "", dates: [...(evt.dates || [])] });
+    setAgendaForm({ titulo: evt.titulo, categoria: evt.categoria, local: evt.local || "", regiao: evt.regiao || "", descricao: evt.descricao || "", dates: [...(evt.dates || [])] });
     setAgendaEditingId(evt.id);
     setAgendaError("");
     setAgendaFormOpen(true);
@@ -1780,7 +1806,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     try {
       const payload = {
         titulo: agendaForm.titulo.trim(), categoria: agendaForm.categoria, local: agendaForm.local.trim(),
-        descricao: agendaForm.descricao.trim(), dates: agendaForm.dates,
+        regiao: agendaForm.regiao.trim(), descricao: agendaForm.descricao.trim(), dates: agendaForm.dates,
       };
       if (agendaEditingId) {
         await updateEvent(team.teamId, agendaEditingId, payload);
@@ -2789,11 +2815,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 <Field label="Loja / evento">
                   <select value={form.local} onChange={(e) => updateField("local", e.target.value)} style={inputStyle}>
                     <option value="">Selecionar</option>
-                    {data.lojas.map((l) => <option key={l} value={l}>{l}</option>)}
+                    {lojasFiltradas.map((l) => <option key={l.nome} value={l.nome}>{l.nome}</option>)}
                   </select>
-                  {data.lojas.length === 0 && (
+                  {data.lojas.length === 0 ? (
                     <div style={{ fontSize: 12, color: "#8A8270", marginTop: 4 }}>Nenhuma loja cadastrada — peça pro dono do time cadastrar no Painel de Administração.</div>
-                  )}
+                  ) : myRegiao && !verTodasLojasRegistrar && lojasFiltradas.length < data.lojas.length ? (
+                    <div onClick={() => setVerTodasLojasRegistrar(true)} style={{ fontSize: 12, color: "#B15C3E", fontWeight: 700, marginTop: 4, cursor: "pointer" }}>Ver lojas de todas as regiões</div>
+                  ) : null}
                 </Field>
                 <Field label="Quantas rodadas tem o torneio?">
                   <QtyPicker
@@ -2812,8 +2840,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 <Field label="Loja / evento">
                   <select value={form.local} onChange={(e) => updateField("local", e.target.value)} style={inputStyle}>
                     <option value="">Selecionar</option>
-                    {data.lojas.map((l) => <option key={l} value={l}>{l}</option>)}
-                    {form.local && !data.lojas.includes(form.local) && <option value={form.local}>{form.local} (antiga)</option>}
+                    {data.lojas.map((l) => <option key={l.nome} value={l.nome}>{l.nome}</option>)}
+                    {form.local && !data.lojas.some((l) => l.nome === form.local) && <option value={form.local}>{form.local} (antiga)</option>}
                   </select>
                 </Field>
                 <Field label="Rodada">
@@ -3672,10 +3700,17 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               }}>
                 {(user.displayName || user.email || "?").charAt(0).toUpperCase()}
               </div>
-              <div>
+              <div style={{ flex: 1 }}>
                 <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 16 }}>{user.displayName || "Jogador"}</div>
                 <div style={{ fontSize: 12, color: "#6E6656" }}>{user.email}</div>
               </div>
+              <select value={myRegiao} onChange={(e) => setMyRegiao(e.target.value)} style={{
+                background: "#EFE9D8", border: "1px solid #C9C0A6", borderRadius: 14, padding: "5px 10px",
+                fontSize: 11, fontWeight: 700, color: "#B15C3E", cursor: "pointer", flexShrink: 0, maxWidth: 120,
+              }}>
+                <option value="">📍 Todas as regiões</option>
+                {regioesConhecidas.map((r) => <option key={r} value={r}>📍 {r}</option>)}
+              </select>
             </div>
 
             <SectionLabel>Meu time</SectionLabel>
@@ -3745,7 +3780,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               {agendaLegendOpen && (
                 <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #C9C0A6" }}>
                   {Object.entries(EVENT_CATEGORIAS).map(([key, cat]) => {
-                    const evtsForCat = events.filter((e) => e.categoria === key);
+                    const evtsForCat = visibleEvents.filter((e) => e.categoria === key);
                     if (evtsForCat.length === 0) return null;
                     return (
                       <div key={key} style={{ marginBottom: 8 }}>
@@ -3761,7 +3796,17 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       </div>
                     );
                   })}
-                  {events.length === 0 && <div style={{ fontSize: 12, color: "#8A8270" }}>Nenhum evento cadastrado ainda.</div>}
+                  {visibleEvents.length === 0 && <div style={{ fontSize: 12, color: "#8A8270" }}>Nenhum evento cadastrado ainda{myRegiao ? ` pra ${myRegiao}` : ""}.</div>}
+                </div>
+              )}
+              {myRegiao && !verTodasAgenda && visibleEvents.length < events.length && (
+                <div onClick={() => setVerTodasAgenda(true)} style={{ fontSize: 12, color: "#B15C3E", fontWeight: 700, marginTop: 10, cursor: "pointer" }}>
+                  Ver eventos de todas as regiões
+                </div>
+              )}
+              {verTodasAgenda && (
+                <div onClick={() => setVerTodasAgenda(false)} style={{ fontSize: 12, color: "#6E6656", fontWeight: 700, marginTop: 10, cursor: "pointer" }}>
+                  Voltar a ver só {myRegiao}
                 </div>
               )}
             </div>
@@ -3784,6 +3829,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   <select value={agendaForm.categoria} onChange={(e) => setAgendaForm((f) => ({ ...f, categoria: e.target.value }))} style={inputStyle}>
                     {Object.entries(EVENT_CATEGORIAS).map(([key, cat]) => <option key={key} value={key}>{cat.label}</option>)}
                   </select>
+                </Field>
+
+                <Field label="Região">
+                  <input value={agendaForm.regiao} onChange={(e) => setAgendaForm((f) => ({ ...f, regiao: e.target.value }))} style={inputStyle} placeholder="Ex: São Paulo" list="regioesConhecidas" />
+                  <datalist id="regioesConhecidas">
+                    {regioesConhecidas.map((r) => <option key={r} value={r} />)}
+                  </datalist>
                 </Field>
 
                 <Field label="Datas">
@@ -4400,18 +4452,24 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                 <input value={newLojaNome} onChange={(e) => setNewLojaNome(e.target.value)} placeholder="Nome da loja"
                   style={{ ...inputStyle, flex: 1 }} />
-                <button onClick={() => { handleAddLoja(newLojaNome); setNewLojaNome(""); }} style={{
-                  padding: "0 16px", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, cursor: "pointer",
-                }}>Adicionar</button>
+                <input value={newLojaRegiao} onChange={(e) => setNewLojaRegiao(e.target.value)} placeholder="Região (ex: São Paulo)"
+                  style={{ ...inputStyle, flex: 1 }} list="regioesConhecidas" />
+                <datalist id="regioesConhecidas">
+                  {regioesConhecidas.map((r) => <option key={r} value={r} />)}
+                </datalist>
               </div>
+              <button onClick={() => { handleAddLoja(newLojaNome, newLojaRegiao); setNewLojaNome(""); setNewLojaRegiao(""); }} style={{
+                width: "100%", padding: "9px 0", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, cursor: "pointer", marginBottom: 10,
+              }}>Adicionar loja</button>
               {data.lojas.length === 0 ? (
                 <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhuma loja cadastrada ainda.</div>
               ) : (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {data.lojas.map((l) => (
-                    <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#EFE9D8", borderRadius: 14, padding: "5px 10px", fontSize: 12, fontWeight: 700 }}>
-                      {l}
-                      <button onClick={() => handleRemoveLoja(l)} style={{ border: "none", background: "none", color: "#8A3F35", fontWeight: 700, cursor: "pointer", padding: 0, fontSize: 13 }}>×</button>
+                    <span key={l.nome} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#EFE9D8", borderRadius: 14, padding: "5px 10px", fontSize: 12, fontWeight: 700 }}>
+                      {l.nome}
+                      {l.regiao && <span style={{ background: "#E6F1FB", color: "#0C447C", borderRadius: 10, padding: "2px 7px", fontSize: 10 }}>{l.regiao}</span>}
+                      <button onClick={() => handleRemoveLoja(l.nome)} style={{ border: "none", background: "none", color: "#8A3F35", fontWeight: 700, cursor: "pointer", padding: 0, fontSize: 13 }}>×</button>
                     </span>
                   ))}
                 </div>
