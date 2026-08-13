@@ -1429,6 +1429,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [agendaError, setAgendaError] = useState("");
   const [agendaSaving, setAgendaSaving] = useState(false);
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState(null);
+  const [agendaEventosVisiveis, setAgendaEventosVisiveis] = useState(5);
   const [importEventsOpen, setImportEventsOpen] = useState(false);
   const [importEventsText, setImportEventsText] = useState("");
   const [importEventsError, setImportEventsError] = useState("");
@@ -3968,7 +3969,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 <div style={{ fontSize: 13, color: "#6E6656" }}>Nenhum evento cadastrado ainda.</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {sortedEvents.map((evt) => {
+                  {sortedEvents.slice(0, agendaEventosVisiveis).map((evt) => {
                     const cat = EVENT_CATEGORIAS[evt.categoria] || EVENT_CATEGORIAS.grande;
                     const indo = (evt.presencas || []).includes(user.uid);
                     const [ny, nm, nd] = evt.nextDate.split("-");
@@ -4014,6 +4015,19 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       </div>
                     );
                   })}
+                </div>
+              )}
+              {sortedEvents.length > 5 && (
+                <div style={{ textAlign: "center", marginTop: 10 }}>
+                  {agendaEventosVisiveis < sortedEvents.length ? (
+                    <button onClick={() => setAgendaEventosVisiveis((n) => n + 10)} style={{
+                      border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", borderRadius: 6, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    }}>Mostrar mais ({sortedEvents.length - agendaEventosVisiveis} restantes)</button>
+                  ) : (
+                    <button onClick={() => setAgendaEventosVisiveis(5)} style={{
+                      border: "1px solid #C9C0A6", background: "transparent", color: "#6E6656", borderRadius: 6, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    }}>Mostrar menos</button>
+                  )}
                 </div>
               )}
             </div>
