@@ -1433,6 +1433,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [agendaSaving, setAgendaSaving] = useState(false);
   const [confirmDeleteEventId, setConfirmDeleteEventId] = useState(null);
   const [agendaEventosVisiveis, setAgendaEventosVisiveis] = useState(5);
+  const [agendaDiaSelecionado, setAgendaDiaSelecionado] = useState(null);
   const [importEventsOpen, setImportEventsOpen] = useState(false);
   const [importEventsText, setImportEventsText] = useState("");
   const [importEventsError, setImportEventsError] = useState("");
@@ -1831,10 +1832,10 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   }
   async function handleSaveEvent() {
     setAgendaError("");
-    if (!agendaForm.titulo.trim()) { setAgendaError("Escreve um título."); return; }
-    if (agendaForm.dates.length === 0) { setAgendaError("Seleciona pelo menos uma data."); return; }
-    setAgendaSaving(true);
     try {
+      if (!agendaForm || !agendaForm.titulo || !agendaForm.titulo.trim()) { setAgendaError("Escreve um título."); return; }
+      if (!agendaForm.dates || agendaForm.dates.length === 0) { setAgendaError("Seleciona pelo menos uma data."); return; }
+      setAgendaSaving(true);
       const payload = {
         titulo: agendaForm.titulo.trim(), categoria: agendaForm.categoria, local: agendaForm.local.trim(),
         regiao: agendaForm.regiao.trim(), descricao: agendaForm.descricao.trim(), dates: agendaForm.dates,
@@ -1848,6 +1849,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       setAgendaForm(null);
       setAgendaEditingId(null);
     } catch (e) {
+      console.error("Erro ao salvar evento:", e);
       setAgendaError("Não consegui salvar: " + (e && e.message ? e.message : "erro desconhecido"));
     } finally {
       setAgendaSaving(false);
@@ -3813,12 +3815,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             <SectionLabel>Agenda</SectionLabel>
             <div style={{ background: "#F6F1E1", borderRadius: 12, padding: 14, marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <button onClick={() => setAgendaMonthCursor((c) => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
+                <button onClick={() => { setAgendaMonthCursor((c) => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 }); setAgendaDiaSelecionado(null); }}
                   style={{ border: "1px solid #C9C0A6", background: "#EFE9D8", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, fontSize: 16, fontWeight: 700, color: "#2A2621", lineHeight: 1 }}>
                   ‹
                 </button>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{monthLabelFull(agendaMonthCursor.year, agendaMonthCursor.month)}</div>
-                <button onClick={() => setAgendaMonthCursor((c) => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
+                <button onClick={() => { setAgendaMonthCursor((c) => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 }); setAgendaDiaSelecionado(null); }}
                   style={{ border: "1px solid #C9C0A6", background: "#EFE9D8", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, fontSize: 16, fontWeight: 700, color: "#2A2621", lineHeight: 1 }}>
                   ›
                 </button>
@@ -3831,21 +3833,44 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   if (!iso) return <div key={i} />;
                   const dayNum = parseInt(iso.split("-")[2], 10);
                   const isToday = iso === todayISO();
-                  const cats = eventsOnDate(iso).map((e) => e.categoria);
+                  const evtsHoje = eventsOnDate(iso);
+                  const cats = evtsHoje.map((e) => e.categoria);
                   const bg = dayBackgroundStyle(cats);
+                  const isSelected = agendaDiaSelecionado === iso;
                   return (
-                    <div key={i} style={{
+                    <div key={i} onClick={() => evtsHoje.length > 0 && setAgendaDiaSelecionado(isSelected ? null : iso)} style={{
                       width: 28, height: 28, margin: "0 auto",
                       display: "flex", alignItems: "center", justifyContent: "center",
                       fontSize: 12, borderRadius: "50%", boxSizing: "border-box",
-                      border: isToday ? "1.5px solid #2A2621" : "none",
+                      border: isSelected ? "1.5px solid #2A2621" : isToday ? "1.5px solid #6E6656" : "none",
                       fontWeight: (isToday || cats.length > 0) ? 700 : 400,
                       color: cats.length > 0 ? "#EFE9D8" : "#2A2621",
+                      cursor: evtsHoje.length > 0 ? "pointer" : "default",
                       ...bg,
                     }}>{dayNum}</div>
                   );
                 })}
               </div>
+
+              {agendaDiaSelecionado && (
+                <div style={{ marginTop: 10, background: "#EFE9D8", borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                    {(() => {
+                      const [dy, dm, dd] = agendaDiaSelecionado.split("-");
+                      return `${dd}/${dm}/${dy}`;
+                    })()}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {eventsOnDate(agendaDiaSelecionado).map((e) => (
+                      <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                        <span style={{ width: 9, height: 9, borderRadius: "50%", background: (EVENT_CATEGORIAS[e.categoria] || {}).color, flexShrink: 0 }} />
+                        <span style={{ color: "#2A2621", fontWeight: 700 }}>{e.titulo}</span>
+                        {e.local && <span style={{ color: "#6E6656" }}>· {e.local}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div onClick={() => setAgendaLegendOpen((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, cursor: "pointer" }}>
                 <span style={{ fontSize: 12, color: "#6E6656", fontWeight: 500 }}>Legenda</span>
