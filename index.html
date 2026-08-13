@@ -1338,8 +1338,19 @@ function TeamGate({ user, onSignOut, onTeamReady, existingTeams, onSelectExistin
 
 // ---------- Main app ----------
 function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onRequestTeamGate }) {
-  const [screen, setScreen] = useState("registrar");
+  const [screen, setScreen] = useState(() => {
+    try {
+      const saved = localStorage.getItem("playbook_screen");
+      const valid = ["registrar", "sideboard", "estatisticas", "decks", "jogadores", "perfil", "admin", "relatorio"];
+      return valid.includes(saved) ? saved : "registrar";
+    } catch (e) {
+      return "registrar";
+    }
+  });
   const [data, setData] = useState({ decks: [], matches: [], activeTournament: null, lojas: [] });
+  useEffect(() => {
+    try { localStorage.setItem("playbook_screen", screen); } catch (e) {}
+  }, [screen]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
