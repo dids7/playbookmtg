@@ -3705,13 +3705,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             <div style={{ background: "#F6F1E1", borderRadius: 12, padding: 14, marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <button onClick={() => setAgendaMonthCursor((c) => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
-                  style={{ border: "1px solid #C9C0A6", background: "#EFE9D8", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}>
-                  <i className="ti ti-chevron-left" style={{ fontSize: 18, color: "#2A2621" }}></i>
+                  style={{ border: "1px solid #C9C0A6", background: "#EFE9D8", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, fontSize: 16, fontWeight: 700, color: "#2A2621", lineHeight: 1 }}>
+                  ‹
                 </button>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{monthLabelFull(agendaMonthCursor.year, agendaMonthCursor.month)}</div>
                 <button onClick={() => setAgendaMonthCursor((c) => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
-                  style={{ border: "1px solid #C9C0A6", background: "#EFE9D8", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}>
-                  <i className="ti ti-chevron-right" style={{ fontSize: 18, color: "#2A2621" }}></i>
+                  style={{ border: "1px solid #C9C0A6", background: "#EFE9D8", borderRadius: "50%", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, fontSize: 16, fontWeight: 700, color: "#2A2621", lineHeight: 1 }}>
+                  ›
                 </button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, textAlign: "center", marginBottom: 2 }}>
@@ -3738,7 +3738,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
               <div onClick={() => setAgendaLegendOpen((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12, cursor: "pointer" }}>
                 <span style={{ fontSize: 12, color: "#6E6656", fontWeight: 500 }}>Legenda</span>
-                <i className={agendaLegendOpen ? "ti ti-chevron-up" : "ti ti-chevron-down"} style={{ fontSize: 14, color: "#6E6656" }}></i>
+                <span style={{ fontSize: 11, color: "#6E6656" }}>{agendaLegendOpen ? "▲" : "▼"}</span>
               </div>
               {agendaLegendOpen && (
                 <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #C9C0A6" }}>
@@ -3790,7 +3790,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     fontSize: 14, color: "#B15C3E", fontWeight: 700, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center",
                   }}>
                     {agendaForm.dates.length === 0 ? "Selecionar datas" : `${agendaForm.dates.length} data${agendaForm.dates.length !== 1 ? "s" : ""} selecionada${agendaForm.dates.length !== 1 ? "s" : ""}`}
-                    <i className="ti ti-calendar" style={{ fontSize: 16 }}></i>
+                    <span style={{ fontSize: 15 }}>📅</span>
                   </button>
                 </Field>
 
@@ -3799,13 +3799,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 8 }}>Toque nos dias que têm esse evento</div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                       <button onClick={() => setAgendaPickerMonthCursor((c) => c.month === 0 ? { year: c.year - 1, month: 11 } : { year: c.year, month: c.month - 1 })}
-                        style={{ border: "1px solid #C9C0A6", background: "#F6F1E1", borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}>
-                        <i className="ti ti-chevron-left" style={{ fontSize: 16, color: "#2A2621" }}></i>
+                        style={{ border: "1px solid #C9C0A6", background: "#F6F1E1", borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, fontSize: 15, fontWeight: 700, color: "#2A2621", lineHeight: 1 }}>
+                        ‹
                       </button>
                       <div style={{ fontSize: 13, fontWeight: 700 }}>{monthLabelFull(agendaPickerMonthCursor.year, agendaPickerMonthCursor.month)}</div>
                       <button onClick={() => setAgendaPickerMonthCursor((c) => c.month === 11 ? { year: c.year + 1, month: 0 } : { year: c.year, month: c.month + 1 })}
-                        style={{ border: "1px solid #C9C0A6", background: "#F6F1E1", borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 }}>
-                        <i className="ti ti-chevron-right" style={{ fontSize: 16, color: "#2A2621" }}></i>
+                        style={{ border: "1px solid #C9C0A6", background: "#F6F1E1", borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, fontSize: 15, fontWeight: 700, color: "#2A2621", lineHeight: 1 }}>
+                        ›
                       </button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, textAlign: "center", marginBottom: 2 }}>
