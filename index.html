@@ -2391,17 +2391,35 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const totalGamesForPie = chartData.reduce((s, d) => s + d.total, 0);
   const pieData = chartData.map((d) => ({ ...d, percent: totalGamesForPie ? Math.round((d.total / totalGamesForPie) * 100) : 0 }));
   const [teamStatsFormato, setTeamStatsFormato] = useState("__all__");
+  const [teamStatsSelectedUids, setTeamStatsSelectedUids] = useState([]); // vazio = todos selecionados
+  const [teamStatsPeriod, setTeamStatsPeriod] = useState(() => monthKey(todayISO()));
+
+  const allSelectablePlayers = useMemo(() => {
+    const list = [];
+    if (visible) list.push({ uid: user.uid, displayName: "Você" });
+    teamPlayers.forEach((p) => list.push({ uid: p.uid, displayName: p.displayName }));
+    return list;
+  }, [visible, teamPlayers, user.uid]);
 
   const combinedMatches = useMemo(() => {
-    const own = visible ? data.matches.filter((m) => m.tipo === "torneio") : [];
-    const others = teamPlayers.flatMap((p) => p.matches.filter((m) => m.tipo === "torneio"));
+    const own = visible ? data.matches.filter((m) => m.tipo === "torneio").map((m) => ({ ...m, __uid: user.uid })) : [];
+    const others = teamPlayers.flatMap((p) => p.matches.filter((m) => m.tipo === "torneio").map((m) => ({ ...m, __uid: p.uid })));
     return [...own, ...others];
-  }, [visible, data.matches, teamPlayers]);
+  }, [visible, data.matches, teamPlayers, user.uid]);
+
+  const teamStatsAvailableMonths = useMemo(() => {
+    const keys = new Set([monthKey(todayISO())]);
+    combinedMatches.forEach((m) => keys.add(monthKey(m.data)));
+    return Array.from(keys).sort().reverse();
+  }, [combinedMatches]);
+
   const teamFilteredMatches = useMemo(() => {
     let list = combinedMatches.filter((m) => m.tipo === "torneio");
     if (teamStatsFormato !== "__all__") list = list.filter((m) => m.formato === teamStatsFormato);
+    if (teamStatsSelectedUids.length > 0) list = list.filter((m) => teamStatsSelectedUids.includes(m.__uid));
+    if (teamStatsPeriod !== "__all__") list = list.filter((m) => monthKey(m.data) === teamStatsPeriod);
     return list;
-  }, [combinedMatches, teamStatsFormato]);
+  }, [combinedMatches, teamStatsFormato, teamStatsSelectedUids, teamStatsPeriod]);
   const teamStats = useMemo(() => computeMatchStats(teamFilteredMatches), [teamFilteredMatches]);
   const contributingCount = teamPlayers.length + (visible ? 1 : 0);
 
@@ -3552,6 +3570,40 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   <SectionLabel>Estatísticas do time (torneios)</SectionLabel>
                 </div>
 
+                <Field label="Jogadores">
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <button onClick={() => setTeamStatsSelectedUids([])} style={{
+                      padding: "6px 12px", borderRadius: 14, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                      border: teamStatsSelectedUids.length === 0 ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                      background: teamStatsSelectedUids.length === 0 ? "#2A2621" : "#F6F1E1",
+                      color: teamStatsSelectedUids.length === 0 ? "#EFE9D8" : "#6E6656",
+                    }}>Todos</button>
+                    {allSelectablePlayers.map((p) => {
+                      const active = teamStatsSelectedUids.includes(p.uid);
+                      return (
+                        <button key={p.uid} onClick={() => {
+                          setTeamStatsSelectedUids((prev) => {
+                            const base = prev.length === 0 ? allSelectablePlayers.map((x) => x.uid) : prev;
+                            return base.includes(p.uid) ? base.filter((u) => u !== p.uid) : [...base, p.uid];
+                          });
+                        }} style={{
+                          padding: "6px 12px", borderRadius: 14, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                          border: (teamStatsSelectedUids.length === 0 || active) ? "2px solid #B15C3E" : "1px solid #C9C0A6",
+                          background: (teamStatsSelectedUids.length === 0 || active) ? "#B15C3E" : "#F6F1E1",
+                          color: (teamStatsSelectedUids.length === 0 || active) ? "#EFE9D8" : "#6E6656",
+                        }}>{p.displayName}</button>
+                      );
+                    })}
+                  </div>
+                </Field>
+
+                <Field label="Período">
+                  <select value={teamStatsPeriod} onChange={(e) => setTeamStatsPeriod(e.target.value)} style={inputStyle}>
+                    <option value="__all__">Tempo todo</option>
+                    {teamStatsAvailableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
+                  </select>
+                </Field>
+
                 <Field label="Formato">
                   <select value={teamStatsFormato} onChange={(e) => setTeamStatsFormato(e.target.value)} style={inputStyle}>
                     <option value="__all__">Geral (todos os formatos)</option>
@@ -3561,7 +3613,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
                 <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px", marginBottom: 16 }}>
                   <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>
-                    {teamStatsFormato === "__all__" ? "Geral" : teamStatsFormato} · {contributingCount} {contributingCount === 1 ? "jogador" : "jogadores"}
+                    {teamStatsFormato === "__all__" ? "Geral" : teamStatsFormato} · {(teamStatsSelectedUids.length || allSelectablePlayers.length)} {(teamStatsSelectedUids.length || allSelectablePlayers.length) === 1 ? "jogador" : "jogadores"}
                   </div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
                     <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 44 }}>{teamStats.winRate}%</span>
