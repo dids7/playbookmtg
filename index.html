@@ -2392,6 +2392,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const pieData = chartData.map((d) => ({ ...d, percent: totalGamesForPie ? Math.round((d.total / totalGamesForPie) * 100) : 0 }));
   const [teamStatsFormato, setTeamStatsFormato] = useState("__all__");
   const [teamStatsSelectedUids, setTeamStatsSelectedUids] = useState([]); // vazio = todos selecionados
+  const [teamStatsPlayerPickerOpen, setTeamStatsPlayerPickerOpen] = useState(false);
   const [teamStatsPeriod, setTeamStatsPeriod] = useState(() => monthKey(todayISO()));
 
   const allSelectablePlayers = useMemo(() => {
@@ -3570,46 +3571,59 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                   <SectionLabel>Estatísticas do time (torneios)</SectionLabel>
                 </div>
 
-                <Field label="Jogadores">
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    <button onClick={() => setTeamStatsSelectedUids([])} style={{
-                      padding: "6px 12px", borderRadius: 14, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                      border: teamStatsSelectedUids.length === 0 ? "2px solid #2A2621" : "1px solid #C9C0A6",
-                      background: teamStatsSelectedUids.length === 0 ? "#2A2621" : "#F6F1E1",
-                      color: teamStatsSelectedUids.length === 0 ? "#EFE9D8" : "#6E6656",
-                    }}>Todos</button>
-                    {allSelectablePlayers.map((p) => {
-                      const active = teamStatsSelectedUids.includes(p.uid);
-                      return (
-                        <button key={p.uid} onClick={() => {
-                          setTeamStatsSelectedUids((prev) => {
-                            const base = prev.length === 0 ? allSelectablePlayers.map((x) => x.uid) : prev;
-                            return base.includes(p.uid) ? base.filter((u) => u !== p.uid) : [...base, p.uid];
-                          });
-                        }} style={{
-                          padding: "6px 12px", borderRadius: 14, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                          border: (teamStatsSelectedUids.length === 0 || active) ? "2px solid #B15C3E" : "1px solid #C9C0A6",
-                          background: (teamStatsSelectedUids.length === 0 || active) ? "#B15C3E" : "#F6F1E1",
-                          color: (teamStatsSelectedUids.length === 0 || active) ? "#EFE9D8" : "#6E6656",
-                        }}>{p.displayName}</button>
-                      );
-                    })}
+                <div style={{ display: "flex", gap: 8, marginBottom: 8, position: "relative" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>Jogadores</div>
+                    <button onClick={() => setTeamStatsPlayerPickerOpen((v) => !v)} style={{
+                      ...inputStyle, width: "100%", textAlign: "left", cursor: "pointer",
+                      display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13,
+                    }}>
+                      <span>{teamStatsSelectedUids.length === 0 ? "Todos" : `${teamStatsSelectedUids.length} selecionado${teamStatsSelectedUids.length !== 1 ? "s" : ""}`}</span>
+                      <span style={{ fontSize: 10, color: "#8A8270" }}>{teamStatsPlayerPickerOpen ? "▲" : "▼"}</span>
+                    </button>
                   </div>
-                </Field>
 
-                <Field label="Período">
-                  <select value={teamStatsPeriod} onChange={(e) => setTeamStatsPeriod(e.target.value)} style={inputStyle}>
-                    <option value="__all__">Tempo todo</option>
-                    {teamStatsAvailableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
-                  </select>
-                </Field>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>Período</div>
+                    <select value={teamStatsPeriod} onChange={(e) => setTeamStatsPeriod(e.target.value)} style={{ ...inputStyle, fontSize: 13 }}>
+                      <option value="__all__">Tempo todo</option>
+                      {teamStatsAvailableMonths.map((k) => <option key={k} value={k}>{monthLabel(k).replace(/^./, (c) => c.toUpperCase())}</option>)}
+                    </select>
+                  </div>
 
-                <Field label="Formato">
-                  <select value={teamStatsFormato} onChange={(e) => setTeamStatsFormato(e.target.value)} style={inputStyle}>
-                    <option value="__all__">Geral (todos os formatos)</option>
-                    {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
-                  </select>
-                </Field>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>Formato</div>
+                    <select value={teamStatsFormato} onChange={(e) => setTeamStatsFormato(e.target.value)} style={{ ...inputStyle, fontSize: 13 }}>
+                      <option value="__all__">Geral</option>
+                      {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {teamStatsPlayerPickerOpen && (
+                  <div style={{ background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                      <button onClick={() => setTeamStatsSelectedUids([])} style={{ border: "none", background: "none", color: "#B15C3E", fontWeight: 700, fontSize: 12, cursor: "pointer", padding: 0 }}>Selecionar todos</button>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+                      {allSelectablePlayers.map((p) => {
+                        const checked = teamStatsSelectedUids.length === 0 || teamStatsSelectedUids.includes(p.uid);
+                        return (
+                          <label key={p.uid} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+                            <input type="checkbox" checked={checked} onChange={() => {
+                              setTeamStatsSelectedUids((prev) => {
+                                const base = prev.length === 0 ? allSelectablePlayers.map((x) => x.uid) : prev;
+                                return base.includes(p.uid) ? base.filter((u) => u !== p.uid) : [...base, p.uid];
+                              });
+                            }} />
+                            {p.displayName}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <button onClick={() => setTeamStatsPlayerPickerOpen(false)} style={{ width: "100%", border: "none", background: "#2A2621", color: "#EFE9D8", borderRadius: 6, padding: "8px 0", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>OK</button>
+                  </div>
+                )}
 
                 <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px", marginBottom: 16 }}>
                   <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>
