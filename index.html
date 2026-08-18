@@ -694,6 +694,15 @@ function wilsonScore(wins, total) {
   const term2 = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n);
   return (term1 - term2) / denominator;
 }
+// % baseado em pontos de torneio (Vitória=3, Empate=1, Derrota=0), sobre o máximo possível (total*3).
+function winPct(wins, draws, total) {
+  if (!total) return 0;
+  return Math.round(((wins * 3 + (draws || 0)) / (total * 3)) * 100);
+}
+// "Vitórias equivalentes" pra alimentar o Wilson Score (empate conta 1/3 de vitória).
+function effectiveWins(wins, draws) {
+  return wins + (draws || 0) / 3;
+}
 
 function computeMatchStats(matches) {
   const total = matches.length;
@@ -701,7 +710,7 @@ function computeMatchStats(matches) {
   const losses = matches.filter((m) => m.resultado === "derrota").length;
   const draws = matches.filter((m) => m.resultado === "empate").length;
   const byeCount = matches.filter((m) => m.isBye).length;
-  const winRate = total ? Math.round((wins / total) * 100) : 0;
+  const winRate = winPct(wins, draws, total);
   const byOpp = {};
   matches.filter((m) => !m.isBye).forEach((m) => {
     byOpp[m.oponenteDeck] = byOpp[m.oponenteDeck] || { total: 0, wins: 0, losses: 0 };
@@ -710,7 +719,7 @@ function computeMatchStats(matches) {
     else if (m.resultado === "derrota") byOpp[m.oponenteDeck].losses += 1;
   });
   const chartData = Object.entries(byOpp)
-    .map(([opp, v]) => ({ name: opp, total: v.total, wins: v.wins, losses: v.losses, winRate: Math.round((v.wins / v.total) * 100) }))
+    .map(([opp, v]) => ({ name: opp, total: v.total, wins: v.wins, losses: v.losses, winRate: winPct(v.wins, v.total - v.wins - v.losses, v.total) }))
     .sort((a, b) => b.total - a.total);
   return { total, wins, losses, draws, byeCount, winRate, chartData };
 }
@@ -741,12 +750,13 @@ function computeReportStats(matches) {
   const wins = matches.filter((m) => m.resultado === "vitoria").length;
   const losses = matches.filter((m) => m.resultado === "derrota").length;
   const byeCount = matches.filter((m) => m.isBye).length;
-  const winRate = total ? Math.round((wins / total) * 100) : 0;
+  const winRate = winPct(wins, total - wins - losses, total);
 
   const byTipo = (tipo) => {
     const list = matches.filter((m) => m.tipo === tipo);
     const w = list.filter((m) => m.resultado === "vitoria").length;
-    return { total: list.length, wins: w, winRate: list.length ? Math.round((w / list.length) * 100) : 0 };
+    const l = list.filter((m) => m.resultado === "derrota").length;
+    return { total: list.length, wins: w, winRate: winPct(w, list.length - w - l, list.length) };
   };
   const torneio = byTipo("torneio");
   const treino = byTipo("treino");
@@ -755,7 +765,8 @@ function computeReportStats(matches) {
   const byPlayDraw = (pd) => {
     const list = allGames.filter((g) => g.playDraw === pd);
     const w = list.filter((g) => g.resultado === "vitoria").length;
-    return { total: list.length, wins: w, winRate: list.length ? Math.round((w / list.length) * 100) : 0 };
+    const l = list.filter((g) => g.resultado === "derrota").length;
+    return { total: list.length, wins: w, winRate: winPct(w, list.length - w - l, list.length) };
   };
   const play = byPlayDraw("play");
   const draw = byPlayDraw("draw");
@@ -772,12 +783,14 @@ function computeReportStats(matches) {
     const g1Games = oppMatches.map((m) => m.games && m.games[0]).filter(Boolean);
     const postBoardGames = oppMatches.flatMap((m) => (m.games || []).slice(1));
     const g1Wins = g1Games.filter((g) => g.resultado === "vitoria").length;
+    const g1Losses = g1Games.filter((g) => g.resultado === "derrota").length;
     const postWins = postBoardGames.filter((g) => g.resultado === "vitoria").length;
+    const postLosses = postBoardGames.filter((g) => g.resultado === "derrota").length;
     const sampleLabel = v.total < 3 ? "amostra pequena" : v.total < 7 ? "amostra média" : "amostra boa";
     return {
-      opp, total: v.total, wins: v.wins, losses: v.losses, winRate: Math.round((v.wins / v.total) * 100),
-      g1WinRate: g1Games.length ? Math.round((g1Wins / g1Games.length) * 100) : null,
-      postBoardWinRate: postBoardGames.length ? Math.round((postWins / postBoardGames.length) * 100) : null,
+      opp, total: v.total, wins: v.wins, losses: v.losses, winRate: winPct(v.wins, v.total - v.wins - v.losses, v.total),
+      g1WinRate: g1Games.length ? winPct(g1Wins, g1Games.length - g1Wins - g1Losses, g1Games.length) : null,
+      postBoardWinRate: postBoardGames.length ? winPct(postWins, postBoardGames.length - postWins - postLosses, postBoardGames.length) : null,
       sampleLabel,
     };
   }).sort((a, b) => b.total - a.total);
@@ -799,7 +812,8 @@ function computeReportStats(matches) {
   const gamesNoMulligan = allGames.filter((g) => g.mulligan === 0);
   const mullWinRate = (list) => {
     const w = list.filter((g) => g.resultado === "vitoria").length;
-    return list.length ? Math.round((w / list.length) * 100) : 0;
+    const l = list.filter((g) => g.resultado === "derrota").length;
+    return winPct(w, list.length - w - l, list.length);
   };
 
   const mullByCount = [0, 1, 2].map((n) => {
@@ -832,20 +846,22 @@ function computeReportStats(matches) {
   const timelineMap = {};
   sorted.forEach((m) => {
     const wk = weekStartLabel(m.data);
-    if (!timelineMap[wk]) timelineMap[wk] = { label: wk, total: 0, wins: 0 };
+    if (!timelineMap[wk]) timelineMap[wk] = { label: wk, total: 0, wins: 0, losses: 0 };
     timelineMap[wk].total += 1;
     if (m.resultado === "vitoria") timelineMap[wk].wins += 1;
+    else if (m.resultado === "derrota") timelineMap[wk].losses += 1;
   });
-  const winRateTimeline = Object.values(timelineMap).map((w) => ({ ...w, winRate: w.total ? Math.round((w.wins / w.total) * 100) : 0 }));
+  const winRateTimeline = Object.values(timelineMap).map((w) => ({ ...w, winRate: winPct(w.wins, w.total - w.wins - w.losses, w.total) }));
 
   const rodadaMap = {};
   matches.filter((m) => m.tipo === "torneio" && m.rodada).forEach((m) => {
     const r = m.rodada;
-    rodadaMap[r] = rodadaMap[r] || { rodada: r, total: 0, wins: 0 };
+    rodadaMap[r] = rodadaMap[r] || { rodada: r, total: 0, wins: 0, losses: 0 };
     rodadaMap[r].total += 1;
     if (m.resultado === "vitoria") rodadaMap[r].wins += 1;
+    else if (m.resultado === "derrota") rodadaMap[r].losses += 1;
   });
-  const rodadaStats = Object.values(rodadaMap).map((r) => ({ ...r, winRate: r.total ? Math.round((r.wins / r.total) * 100) : 0 })).sort((a, b) => a.rodada - b.rodada);
+  const rodadaStats = Object.values(rodadaMap).map((r) => ({ ...r, winRate: winPct(r.wins, r.total - r.wins - r.losses, r.total) })).sort((a, b) => a.rodada - b.rodada);
 
   const torneiosMap = {};
   matches.filter((m) => m.tipo === "torneio").forEach((m) => {
@@ -868,20 +884,22 @@ function computeReportStats(matches) {
 
   const byDeck = {};
   matches.forEach((m) => {
-    byDeck[m.meuDeck] = byDeck[m.meuDeck] || { total: 0, wins: 0 };
+    byDeck[m.meuDeck] = byDeck[m.meuDeck] || { total: 0, wins: 0, losses: 0 };
     byDeck[m.meuDeck].total += 1;
     if (m.resultado === "vitoria") byDeck[m.meuDeck].wins += 1;
+    else if (m.resultado === "derrota") byDeck[m.meuDeck].losses += 1;
   });
-  const deckStats = Object.entries(byDeck).map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }));
+  const deckStats = Object.entries(byDeck).map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: winPct(v.wins, v.total - v.wins - v.losses, v.total) }));
 
   const matrixMap = {};
   matches.filter((m) => !m.isBye).forEach((m) => {
     const key = m.meuDeck + "|" + m.oponenteDeck;
-    matrixMap[key] = matrixMap[key] || { meuDeck: m.meuDeck, oponenteDeck: m.oponenteDeck, total: 0, wins: 0 };
+    matrixMap[key] = matrixMap[key] || { meuDeck: m.meuDeck, oponenteDeck: m.oponenteDeck, total: 0, wins: 0, losses: 0 };
     matrixMap[key].total += 1;
     if (m.resultado === "vitoria") matrixMap[key].wins += 1;
+    else if (m.resultado === "derrota") matrixMap[key].losses += 1;
   });
-  const deckMatchupMatrix = Object.values(matrixMap).map((v) => ({ ...v, winRate: Math.round((v.wins / v.total) * 100) })).sort((a, b) => b.total - a.total);
+  const deckMatchupMatrix = Object.values(matrixMap).map((v) => ({ ...v, winRate: winPct(v.wins, v.total - v.wins - v.losses, v.total) })).sort((a, b) => b.total - a.total);
 
   const tagCounts = {};
   matches.filter((m) => m.resultado === "derrota" && m.tagsDerrota && m.tagsDerrota.length > 0).forEach((m) => {
@@ -2360,17 +2378,18 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     const losses = filteredMatches.filter((m) => m.resultado === "derrota").length;
     const draws = total - wins - losses;
     const byeCount = filteredMatches.filter((m) => m.isBye).length;
-    return { total, wins, losses, draws, byeCount, winRate: total ? Math.round((wins / total) * 100) : 0 };
+    return { total, wins, losses, draws, byeCount, winRate: winPct(wins, draws, total) };
   }, [filteredMatches]);
   const matchupStats = useMemo(() => {
     const byOpp = {};
     filteredMatches.filter((m) => !m.isBye).forEach((m) => {
-      byOpp[m.oponenteDeck] = byOpp[m.oponenteDeck] || { total: 0, wins: 0 };
+      byOpp[m.oponenteDeck] = byOpp[m.oponenteDeck] || { total: 0, wins: 0, losses: 0 };
       byOpp[m.oponenteDeck].total += 1;
       if (m.resultado === "vitoria") byOpp[m.oponenteDeck].wins += 1;
+      else if (m.resultado === "derrota") byOpp[m.oponenteDeck].losses += 1;
     });
     return Object.entries(byOpp)
-      .map(([opp, v]) => ({ opp, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
+      .map(([opp, v]) => ({ opp, total: v.total, wins: v.wins, winRate: winPct(v.wins, v.total - v.wins - v.losses, v.total) }))
       .sort((a, b) => b.total - a.total);
   }, [filteredMatches]);
   const playDrawStats = useMemo(() => {
@@ -2378,7 +2397,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     const summarize = (games) => {
       const total = games.length;
       const wins = games.filter((g) => g.resultado === "vitoria").length;
-      return { total, wins, winRate: total ? Math.round((wins / total) * 100) : 0 };
+      const losses = games.filter((g) => g.resultado === "derrota").length;
+      return { total, wins, winRate: winPct(wins, total - wins - losses, total) };
     };
     return {
       play: summarize(allGames.filter((g) => g.playDraw === "play")),
@@ -2531,7 +2551,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
           treinoStats: computeMatchStats(treinoMatches),
         };
       })
-      .sort((a, b) => wilsonScore(b.stats.wins, b.stats.total) - wilsonScore(a.stats.wins, a.stats.total));
+      .sort((a, b) => wilsonScore(effectiveWins(b.stats.wins, b.stats.draws), b.stats.total) - wilsonScore(effectiveWins(a.stats.wins, a.stats.draws), a.stats.total));
   }, [adminFilteredByPlayer]);
 
   const adminPlayerFeedback = useMemo(() => {
@@ -2549,24 +2569,25 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const adminPlayerOfMonth = useMemo(() => {
     return [...adminByPlayer]
       .filter((p) => p.torneioStats.total >= 2)
-      .sort((a, b) => wilsonScore(b.torneioStats.wins, b.torneioStats.total) - wilsonScore(a.torneioStats.wins, a.torneioStats.total))[0] || null;
+      .sort((a, b) => wilsonScore(effectiveWins(b.torneioStats.wins, b.torneioStats.draws), b.torneioStats.total) - wilsonScore(effectiveWins(a.torneioStats.wins, a.torneioStats.draws), a.torneioStats.total))[0] || null;
   }, [adminByPlayer]);
   const adminNeymarOfMonth = useMemo(() => {
     return [...adminByPlayer]
       .filter((p) => p.treinoStats.total >= 2)
-      .sort((a, b) => wilsonScore(b.treinoStats.wins, b.treinoStats.total) - wilsonScore(a.treinoStats.wins, a.treinoStats.total))[0] || null;
+      .sort((a, b) => wilsonScore(effectiveWins(b.treinoStats.wins, b.treinoStats.draws), b.treinoStats.total) - wilsonScore(effectiveWins(a.treinoStats.wins, a.treinoStats.draws), a.treinoStats.total))[0] || null;
   }, [adminByPlayer]);
 
   const adminByDeck = useMemo(() => {
     const byDeck = {};
     adminCombinedMatches.forEach((m) => {
-      byDeck[m.meuDeck] = byDeck[m.meuDeck] || { total: 0, wins: 0 };
+      byDeck[m.meuDeck] = byDeck[m.meuDeck] || { total: 0, wins: 0, losses: 0 };
       byDeck[m.meuDeck].total += 1;
       if (m.resultado === "vitoria") byDeck[m.meuDeck].wins += 1;
+      else if (m.resultado === "derrota") byDeck[m.meuDeck].losses += 1;
     });
     return Object.entries(byDeck)
-      .map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
-      .sort((a, b) => wilsonScore(b.wins, b.total) - wilsonScore(a.wins, a.total));
+      .map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, losses: v.losses, winRate: winPct(v.wins, v.total - v.wins - v.losses, v.total) }))
+      .sort((a, b) => wilsonScore(effectiveWins(b.wins, b.total - b.wins - b.losses), b.total) - wilsonScore(effectiveWins(a.wins, a.total - a.wins - a.losses), a.total));
   }, [adminCombinedMatches]);
 
   const adminPlayDraw = useMemo(() => {
@@ -2575,7 +2596,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       const total = games.length;
       const wins = games.filter((g) => g.resultado === "vitoria").length;
       const losses = games.filter((g) => g.resultado === "derrota").length;
-      return { total, wins, losses, winRate: total ? Math.round((wins / total) * 100) : 0 };
+      return { total, wins, losses, winRate: winPct(wins, total - wins - losses, total) };
     };
     return {
       play: summarize(allGames.filter((g) => g.playDraw === "play")),
@@ -2589,7 +2610,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       const total = games.length;
       const wins = games.filter((g) => g.resultado === "vitoria").length;
       const losses = games.filter((g) => g.resultado === "derrota").length;
-      return { total, wins, losses, winRate: total ? Math.round((wins / total) * 100) : 0 };
+      return { total, wins, losses, winRate: winPct(wins, total - wins - losses, total) };
     };
     return {
       com: summarize(allGames.filter((g) => g.mulligan > 0)),
@@ -2609,8 +2630,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       else if (m.resultado === "derrota") byCategoria[cat].losses += 1;
     });
     return Object.entries(byCategoria)
-      .map(([categoria, v]) => ({ categoria, total: v.total, wins: v.wins, losses: v.losses, winRate: Math.round((v.wins / v.total) * 100) }))
-      .sort((a, b) => wilsonScore(b.wins, b.total) - wilsonScore(a.wins, a.total));
+      .map(([categoria, v]) => ({ categoria, total: v.total, wins: v.wins, losses: v.losses, winRate: winPct(v.wins, v.total - v.wins - v.losses, v.total) }))
+      .sort((a, b) => wilsonScore(effectiveWins(b.wins, b.total - b.wins - b.losses), b.total) - wilsonScore(effectiveWins(a.wins, a.total - a.wins - a.losses), a.total));
   }, [adminCombinedMatches, data.decks]);
 
   const adminTeamBestMatchup = useMemo(() => {
@@ -4769,7 +4790,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                         <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{p.displayName}</span>
                         <span style={{ fontWeight: 700, color: barColor(p.stats.winRate), textAlign: "right" }}>
                           {p.stats.winRate}% <span style={{ fontWeight: 500, fontSize: 12, color: "#6E6656" }}>({p.stats.wins}V/{p.stats.losses}D)</span>
-                          <div style={{ fontWeight: 500, fontSize: 11, color: "#8A8270" }}>conf: {Math.round(wilsonScore(p.stats.wins, p.stats.total) * 100)}%</div>
+                          <div style={{ fontWeight: 500, fontSize: 11, color: "#8A8270" }}>conf: {Math.round(wilsonScore(effectiveWins(p.stats.wins, p.stats.draws), p.stats.total) * 100)}%</div>
                         </span>
                       </div>
                     ))}
@@ -4785,7 +4806,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                           <span>{d.deck}</span>
                           <span style={{ textAlign: "right" }}>
                             <strong>{d.winRate}% ({d.wins}/{d.total})</strong>
-                            <div style={{ fontSize: 11, color: "#8A8270", fontWeight: 500 }}>conf: {Math.round(wilsonScore(d.wins, d.total) * 100)}%</div>
+                            <div style={{ fontSize: 11, color: "#8A8270", fontWeight: 500 }}>conf: {Math.round(wilsonScore(effectiveWins(d.wins, d.total - d.wins - d.losses), d.total) * 100)}%</div>
                           </span>
                         </div>
                       ))}
@@ -4857,7 +4878,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                           <span>{c.categoria}</span>
                           <span style={{ textAlign: "right" }}>
                             <strong>{c.winRate}% ({c.wins}V/{c.losses}D)</strong>
-                            <div style={{ fontSize: 11, color: "#8A8270", fontWeight: 500 }}>conf: {Math.round(wilsonScore(c.wins, c.total) * 100)}%</div>
+                            <div style={{ fontSize: 11, color: "#8A8270", fontWeight: 500 }}>conf: {Math.round(wilsonScore(effectiveWins(c.wins, c.total - c.wins - c.losses), c.total) * 100)}%</div>
                           </span>
                         </div>
                       ))}
@@ -5461,7 +5482,7 @@ function BarChartCustom({ data }) {
             <span style={{ fontWeight: 700 }}>
               {d.winRate}% ({d.total})
               {typeof d.wins === "number" && (
-                <span style={{ fontWeight: 500, color: "#8A8270", fontSize: 11 }}> · conf: {Math.round(wilsonScore(d.wins, d.total) * 100)}%</span>
+                <span style={{ fontWeight: 500, color: "#8A8270", fontSize: 11 }}> · conf: {Math.round(wilsonScore(effectiveWins(d.wins, d.total - d.wins - (d.losses || 0)), d.total) * 100)}%</span>
               )}
             </span>
           </div>
