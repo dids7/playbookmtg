@@ -1037,9 +1037,9 @@ async function loadUserData(uidStr) {
   const snap = await getDoc(ref);
   if (snap.exists()) {
     const d = snap.data();
-    return { matches: d.matches || [], ownedDecks: d.ownedDecks || [], sideboards: d.sideboards || [], activeTournament: d.activeTournament || null, deckLists: d.deckLists || [] };
+    return { matches: d.matches || [], ownedDecks: d.ownedDecks || [], sideboards: d.sideboards || [], activeTournament: d.activeTournament || null, deckLists: d.deckLists || [], clmStages: d.clmStages || {} };
   }
-  return { matches: [], ownedDecks: [], sideboards: [], activeTournament: null, deckLists: [] };
+  return { matches: [], ownedDecks: [], sideboards: [], activeTournament: null, deckLists: [], clmStages: {} };
 }
 async function saveMatches(uidStr, matches) {
   const { db, doc, setDoc } = window.__fb;
@@ -1072,6 +1072,11 @@ async function saveActiveTournament(uidStr, activeTournament) {
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "users", uidStr);
   await setDoc(ref, { activeTournament: activeTournament || null }, { merge: true });
+}
+async function saveClmStages(uidStr, clmStages) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "users", uidStr);
+  await setDoc(ref, { clmStages: clmStages || {} }, { merge: true });
 }
 
 // ---------- Auth gate ----------
@@ -1398,7 +1403,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       return "registrar";
     }
   });
-  const [data, setData] = useState({ decks: [], matches: [], activeTournament: null, lojas: [] });
+  const [data, setData] = useState({ decks: [], matches: [], activeTournament: null, lojas: [], clmStages: {} });
   useEffect(() => {
     try { localStorage.setItem("playbook_screen", screen); } catch (e) {}
   }, [screen]);
@@ -1433,6 +1438,11 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [editingId, setEditingId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [novoTorneioRodadas, setNovoTorneioRodadas] = useState(null);
+  const [novoTorneioIsClm, setNovoTorneioIsClm] = useState(false);
+  const [novoTorneioClmEtapa, setNovoTorneioClmEtapa] = useState(null);
+  const [editandoClmEtapa, setEditandoClmEtapa] = useState(false);
+  const [clmEtapaEditValue, setClmEtapaEditValue] = useState(null);
+  const [clmError, setClmError] = useState("");
   const [confirmDropTournament, setConfirmDropTournament] = useState(false);
   const [chartType, setChartType] = useState("bar");
   const [visible, setVisible] = useState(false);
@@ -1612,7 +1622,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     (async () => {
       try {
         const userData = await loadUserData(user.uid);
-        setData((prev) => ({ ...prev, matches: userData.matches, activeTournament: userData.activeTournament }));
+        setData((prev) => ({ ...prev, matches: userData.matches, activeTournament: userData.activeTournament, clmStages: userData.clmStages }));
         setOwnedDecks(userData.ownedDecks);
         setSideboards(userData.sideboards);
         setDeckLists(userData.deckLists);
@@ -1954,6 +1964,42 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       return false;
     }
   }
+  async function persistClmStages(nextClmStages) {
+    try {
+      await saveClmStages(user.uid, nextClmStages);
+      syncProfileMirror(team.teamId, user.uid, { clmStages: nextClmStages }).catch(() => {});
+      setData((prev) => ({ ...prev, clmStages: nextClmStages }));
+      return true;
+    } catch (e) {
+      setError("Não consegui atualizar o progresso do CLM: " + (e && e.message ? e.message : "erro desconhecido"));
+      return false;
+    }
+  }
+  function getMaxClmEtapa(clmStages, loja, excludeTorneioId) {
+    const lojaStages = (clmStages && clmStages[loja]) || {};
+    let max = 0;
+    Object.entries(lojaStages).forEach(([etapa, info]) => {
+      if (excludeTorneioId && info && info.torneioId === excludeTorneioId) return;
+      const n = parseInt(etapa, 10);
+      if (n > max) max = n;
+    });
+    return max;
+  }
+  // Marca a etapa escolhida como "jogado" e preenche automaticamente de falta as etapas puladas.
+  function buildClmStagesUpdate(clmStages, loja, etapa, torneioId, excludeTorneioId) {
+    const lojaStages = { ...((clmStages && clmStages[loja]) || {}) };
+    if (excludeTorneioId) {
+      Object.keys(lojaStages).forEach((k) => {
+        if (lojaStages[k] && lojaStages[k].torneioId === excludeTorneioId) delete lojaStages[k];
+      });
+    }
+    const maxAntes = getMaxClmEtapa({ [loja]: lojaStages }, loja);
+    for (let e = maxAntes + 1; e < etapa; e++) {
+      lojaStages[e] = { status: "falta", torneioId };
+    }
+    lojaStages[etapa] = { status: "jogado", torneioId };
+    return { ...clmStages, [loja]: lojaStages };
+  }
   async function handleDropTournament() {
     setConfirmDropTournament(false);
     const ok = await persistActiveTournament(null);
@@ -1961,6 +2007,27 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       setData((prev) => ({ ...prev, activeTournament: null }));
       showActionToast("✓ Torneio encerrado (drop)");
     }
+  }
+  async function handleSaveClmEtapaEdit() {
+    setClmError("");
+    if (!clmEtapaEditValue) { setClmError("Escolhe uma etapa."); return; }
+    const at = data.activeTournament;
+    const maxAtual = getMaxClmEtapa(data.clmStages, at.local, at.id);
+    if (clmEtapaEditValue <= maxAtual) {
+      setClmError(`Você já registrou até a etapa ${maxAtual} do CLM nessa loja (fora esse torneio). Escolhe uma etapa maior.`);
+      return;
+    }
+    const nextClmStages = buildClmStagesUpdate(data.clmStages, at.local, clmEtapaEditValue, at.id, at.id);
+    const okStages = await persistClmStages(nextClmStages);
+    if (!okStages) return;
+    const nextTournament = { ...at, clmEtapa: clmEtapaEditValue };
+    const nextMatches = data.matches.map((m) => (m.torneioId === at.id ? { ...m, clmEtapa: clmEtapaEditValue } : m));
+    await persistActiveTournament(nextTournament);
+    await persistMatches(nextMatches);
+    setData((prev) => ({ ...prev, activeTournament: nextTournament, matches: nextMatches }));
+    syncAllMatchesForAdmin(team.teamId, user.uid, user.displayName || user.email, nextMatches).catch(() => {});
+    setEditandoClmEtapa(false);
+    showActionToast("✓ Etapa do CLM atualizada");
   }
 
   function updateField(field, value) {
@@ -2286,11 +2353,23 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         if (!novoTorneioRodadas) {
           setSaving(false); setError("Escolhe quantas rodadas tem o torneio."); return;
         }
+        if (novoTorneioIsClm) {
+          if (!novoTorneioClmEtapa) {
+            setSaving(false); setError("Escolhe qual etapa do CLM é essa."); return;
+          }
+          const maxAtual = getMaxClmEtapa(data.clmStages, form.local.trim());
+          if (novoTorneioClmEtapa <= maxAtual) {
+            setSaving(false); setError(`Você já registrou até a etapa ${maxAtual} do CLM nessa loja. Escolhe uma etapa maior.`); return;
+          }
+        }
         torneioId = uid();
         rodadaToSave = 1;
         localToSave = form.local.trim();
         dataToSave = form.data;
-        novoTorneioObj = { id: torneioId, local: localToSave, data: dataToSave, formato: form.formato, totalRounds: novoTorneioRodadas, roundsPlayed: 0, dropped: false };
+        novoTorneioObj = {
+          id: torneioId, local: localToSave, data: dataToSave, formato: form.formato, totalRounds: novoTorneioRodadas, roundsPlayed: 0, dropped: false,
+          isClmEtapa: !!novoTorneioIsClm, clmEtapa: novoTorneioIsClm ? novoTorneioClmEtapa : null,
+        };
       }
     }
 
@@ -2301,6 +2380,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         tipo: form.tipo, local: form.tipo === "torneio" ? localToSave : form.local, data: form.tipo === "torneio" ? dataToSave : form.data,
         rodada: form.tipo === "torneio" ? rodadaToSave : "",
         torneioId: form.tipo === "torneio" ? torneioId : "",
+        isClmEtapa: form.tipo === "torneio" ? !!(novoTorneioObj || data.activeTournament || {}).isClmEtapa : false,
+        clmEtapa: form.tipo === "torneio" ? (novoTorneioObj || data.activeTournament || {}).clmEtapa || null : null,
         colocacao: form.colocacao, nota: form.nota,
         tagsDerrota: outcome.outcome === "derrota" ? form.tagsDerrota : [],
       };
@@ -2317,6 +2398,10 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       if (ok) {
         if (form.tipo === "torneio" && !editingId) {
           const baseTournament = novoTorneioObj || data.activeTournament;
+          if (novoTorneioObj && novoTorneioObj.isClmEtapa) {
+            const nextClmStages = buildClmStagesUpdate(data.clmStages, novoTorneioObj.local, novoTorneioObj.clmEtapa, novoTorneioObj.id);
+            persistClmStages(nextClmStages).catch(() => {});
+          }
           const updatedRounds = baseTournament.roundsPlayed + 1;
           if (updatedRounds >= baseTournament.totalRounds) {
             await persistActiveTournament(null);
@@ -2327,6 +2412,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             setData((prev) => ({ ...prev, activeTournament: nextTournament }));
           }
           setNovoTorneioRodadas(null);
+          setNovoTorneioIsClm(false);
+          setNovoTorneioClmEtapa(null);
         }
         if (editingId) {
           setEditingId(null); setForm(emptyForm()); setScreen("estatisticas");
@@ -2921,6 +3008,23 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 {data.activeTournament.data && (
                   <div style={{ color: "#6E6656", marginTop: 2 }}>Data travada: {data.activeTournament.data.split("-").reverse().join("/")}</div>
                 )}
+                {data.activeTournament.isClmEtapa && !editandoClmEtapa && (
+                  <div style={{ color: "#6E6656", marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>Etapa {data.activeTournament.clmEtapa} do CLM</span>
+                    <span onClick={() => { setClmEtapaEditValue(data.activeTournament.clmEtapa); setEditandoClmEtapa(true); setClmError(""); }} style={{ color: "#B15C3E", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Editar</span>
+                  </div>
+                )}
+                {editandoClmEtapa && (
+                  <div style={{ marginTop: 8, background: "#F6F1E1", borderRadius: 6, padding: 10 }}>
+                    <div style={{ fontSize: 12, color: "#6E6656", marginBottom: 6 }}>Corrigir etapa do CLM:</div>
+                    <QtyPicker value={clmEtapaEditValue} onChange={setClmEtapaEditValue} options={[1, 2, 3, 4, 5]} suffix="" placeholder="Selecionar" fullWidth />
+                    {clmError && <div style={{ color: "#8A3F35", fontSize: 12, marginTop: 6 }}>{clmError}</div>}
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <button onClick={handleSaveClmEtapaEdit} style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Salvar</button>
+                      <button onClick={() => { setEditandoClmEtapa(false); setClmError(""); }} style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: "1px solid #C9C0A6", background: "#EFE9D8", color: "#6E6656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                    </div>
+                  </div>
+                )}
                 {confirmDropTournament ? (
                   <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                     <button onClick={handleDropTournament} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "none", background: "#8A3F35", color: "#EFE9D8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar drop</button>
@@ -2954,6 +3058,21 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     fullWidth
                   />
                 </Field>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <input type="checkbox" id="clmCheckbox" checked={novoTorneioIsClm} onChange={(e) => { setNovoTorneioIsClm(e.target.checked); if (!e.target.checked) setNovoTorneioClmEtapa(null); }} style={{ width: 16, height: 16, cursor: "pointer" }} />
+                  <label htmlFor="clmCheckbox" style={{ fontSize: 13, color: "#2A2621", cursor: "pointer" }}>É uma etapa do CLM?</label>
+                </div>
+                {novoTorneioIsClm && (
+                  <Field label="Qual etapa?">
+                    <QtyPicker value={novoTorneioClmEtapa} onChange={setNovoTorneioClmEtapa} options={[1, 2, 3, 4, 5]} suffix="" placeholder="Selecionar" fullWidth />
+                    {form.local && (() => {
+                      const max = getMaxClmEtapa(data.clmStages, form.local);
+                      return max > 0 ? (
+                        <div style={{ fontSize: 12, color: "#8A8270", marginTop: 4 }}>Última etapa registrada nessa loja: {max}. Sugestão: etapa {Math.min(max + 1, 5)}.</div>
+                      ) : null;
+                    })()}
+                  </Field>
+                )}
               </>
             )}
             {form.tipo === "torneio" && editingId && (
